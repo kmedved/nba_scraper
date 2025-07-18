@@ -11,7 +11,6 @@ import sys
 import json
 import datetime
 import requests
-import time
 import pandas as pd
 import numpy as np
 
@@ -27,64 +26,18 @@ from nba_scraper.stat_calc_functions import (
 
 # TODO look at replacing this with the fake-useragent package Matt Barlowe 2019-12-04
 # have to pass this to the requests function or the api will return a 403 code
-USER_AGENT = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:72.0) Gecko/20100101 Firefox/72.0",
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.5",
-    "X-NewRelic-ID": "VQECWF5UChAHUlNTBwgBVw==",
-    "x-nba-stats-origin": "stats",
-    "x-nba-stats-token": "true",
-    "Connection": "keep-alive",
-    "Referer": "https://stats.nba.com/",
-}
+SESSION = requests.Session()
+SESSION.headers.update(
+    {
+        "User-Agent": requests.utils.default_user_agent(),
+        "Accept": "application/json, text/plain, */*",
+        "x-nba-stats-origin": "stats",
+        "x-nba-stats-token": "true",
+        "Referer": "https://www.nba.com",
+    }
+)
 
 
-def get_date_games(from_date, to_date):
-    """
-    Get all the game_ids in a valid date range
-    Inputs:
-    date_from   - Date to scrape from
-    date_to     - Date to scrape to
-    Outputs:
-    game_ids - List of game_ids in range
-    """
-    game_ids = []
-    from_date = datetime.datetime.strptime(from_date, "%Y-%m-%d")
-    to_date = datetime.datetime.strptime(to_date, "%Y-%m-%d")
-
-    # Must check each season in between date range
-    for season in range(get_season(from_date), get_season(to_date) + 1):
-        url = (
-            "http://data.nba.com/data/10s/v2015/json/mobile_teams"
-            f"/nba/{season}/league/00_full_schedule.json"
-        )
-        schedule = requests.get(url).json()
-        time.sleep(1)
-
-        for month in schedule["lscd"]:
-            if month["mscd"]["g"]:
-                # Assume games in order so first in list is first game in month
-                cur_month = datetime.datetime.strptime(
-                    month["mscd"]["g"][0]["gdte"], "%Y-%m-%d"
-                )
-
-                # If first game in month doesn't fall in range no need to check each game for rest of month
-                # Convert from_date to beginning of month as that is where cur_month starts
-                if (
-                    to_date
-                    >= cur_month
-                    >= (from_date - datetime.timedelta(from_date.day - 1))
-                ):
-                    for game in month["mscd"]["g"]:
-                        # print(game['gdte'])
-                        # Check if individual game in date range
-                        if (
-                            to_date
-                            >= datetime.datetime.strptime(game["gdte"], "%Y-%m-%d")
-                            >= from_date
-                        ):
-                            game_ids.append(game["gid"])
-    return game_ids
 
 
 def scrape_pbp(v2_dict):
@@ -107,70 +60,16 @@ def scrape_pbp(v2_dict):
 
     # pulling the home and away team abbreviations and the game date
 
-    # TODO look at these and see if they are jump ball violations which is
-    # TODO eventmsgtype 7 instead of 10
-    if pbp_v2_df.game_id.unique()[0] == "0020200577":
-        home_team_abbrev = "WAS"
-        away_team_abbrev = "DEN"
-        pbp_v2_df["home_team_abbrev"] = "WAS"
-        pbp_v2_df["away_team_abbrev"] = "DEN"
-
-    elif pbp_v2_df.game_id.unique()[0] == "0020300286":
-        home_team_abbrev = "NOH"
-        away_team_abbrev = "MIL"
-        pbp_v2_df["home_team_abbrev"] = "NOH"
-        pbp_v2_df["away_team_abbrev"] = "MIL"
-
-    elif pbp_v2_df.game_id.unique()[0] == "0021700259":
-        home_team_abbrev = "HOU"
-        away_team_abbrev = "DEN"
-        pbp_v2_df["home_team_abbrev"] = "HOU"
-        pbp_v2_df["away_team_abbrev"] = "DEN"
-    elif pbp_v2_df.game_id.unique()[0] == "0021700477":
-        home_team_abbrev = "OKC"
-        away_team_abbrev = "ATL"
-        pbp_v2_df["home_team_abbrev"] = "OKC"
-        pbp_v2_df["away_team_abbrev"] = "ATL"
-    elif pbp_v2_df.game_id.unique()[0] == "0021700957":
-        home_team_abbrev = "CHA"
-        away_team_abbrev = "PHI"
-        pbp_v2_df["home_team_abbrev"] = "CHA"
-        pbp_v2_df["away_team_abbrev"] = "PHI"
-    elif pbp_v2_df.game_id.unique()[0] == "0021900251":
-        home_team_abbrev = "DAL"
-        away_team_abbrev = "LAC"
-        pbp_v2_df["home_team_abbrev"] = "DAL"
-        pbp_v2_df["away_team_abbrev"] = "LAC"
-    elif pbp_v2_df.game_id.unique()[0] == "0021900539":
-        home_team_abbrev = "CHA"
-        away_team_abbrev = "IND"
-        pbp_v2_df["home_team_abbrev"] = "CHA"
-        pbp_v2_df["away_team_abbrev"] = "IND"
+    jump_ball = pbp_v2_df[pbp_v2_df["eventmsgtype"] == 10].iloc[0]
+    if pd.isnull(jump_ball["homedescription"]):
+        home_team_abbrev = jump_ball["player2_team_abbreviation"]
+        away_team_abbrev = jump_ball["player1_team_abbreviation"]
     else:
-        if (
-            pd.isnull(
-                pbp_v2_df[pbp_v2_df["eventmsgtype"] == 10][["homedescription"]].values[
-                    0
-                ]
-            )
-            == 1
-        ):
-            home_team_abbrev = pbp_v2_df[pbp_v2_df["eventmsgtype"] == 10][
-                "player2_team_abbreviation"
-            ].iloc[0]
-            away_team_abbrev = pbp_v2_df[pbp_v2_df["eventmsgtype"] == 10][
-                "player1_team_abbreviation"
-            ].iloc[0]
-        else:
-            home_team_abbrev = pbp_v2_df[pbp_v2_df["eventmsgtype"] == 10][
-                "player1_team_abbreviation"
-            ].iloc[0]
-            away_team_abbrev = pbp_v2_df[pbp_v2_df["eventmsgtype"] == 10][
-                "player2_team_abbreviation"
-            ].iloc[0]
+        home_team_abbrev = jump_ball["player1_team_abbreviation"]
+        away_team_abbrev = jump_ball["player2_team_abbreviation"]
 
-        pbp_v2_df["home_team_abbrev"] = home_team_abbrev
-        pbp_v2_df["away_team_abbrev"] = away_team_abbrev
+    pbp_v2_df["home_team_abbrev"] = home_team_abbrev
+    pbp_v2_df["away_team_abbrev"] = away_team_abbrev
 
     clean_df = pbp_v2_df
 
@@ -326,12 +225,12 @@ def get_pbp_api(game_id):
     v2_dict          - Dictionary of the JSON response from the stats.nba.com api
     """
     v2_api_url = (
-        "https://stats.nba.com/stats/playbyplayv2?"
-        f"EndPeriod=14&GameID={game_id}&StartPeriod=1"
+        "https://cdn.nba.com/static/json/liveData/playbyplay/"
+        f"playbyplay_{game_id}.json"
     )
 
     try:
-        v2_rep = requests.get(v2_api_url, headers=USER_AGENT)
+        v2_rep = SESSION.get(v2_api_url)
     except json.decoder.JSONDecodeError as ex:
         print(ex)
         print(f"This is the stats.nba.com API's output: {v2_rep.text}")
@@ -366,12 +265,12 @@ def get_lineup_api(game_id, period):
         end_range = start_range + 1000
 
     url = (
-        f"https://stats.nba.com/stats/boxscoreadvancedv2/?gameId={game_id}&"
+        f"https://stats.nba.com/stats/boxscoreadvancedv3?gameId={game_id}&"
         f"startPeriod={period}&endPeriod={period}&startRange={start_range}&"
         f"endRange={end_range}&rangeType=2"
     )
 
-    lineups_req = requests.get(url, headers=USER_AGENT)
+    lineups_req = SESSION.get(url)
     lineup_req_dict = json.loads(lineups_req.text)
 
     return lineup_req_dict
@@ -610,26 +509,26 @@ def get_lineup(period_df, lineups, dataframe):
                 if ids[0] != period_df.iloc[i, :]["player1_id"]
             ]
             home_ids_names.append((period_df.iloc[i, 20], period_df.iloc[i, 21]))
-            period_df.iat[i, 57] = home_ids_names[0][0]
-            period_df.iat[i, 56] = home_ids_names[0][1]
-            period_df.iat[i, 59] = home_ids_names[1][0]
-            period_df.iat[i, 58] = home_ids_names[1][1]
-            period_df.iat[i, 61] = home_ids_names[2][0]
-            period_df.iat[i, 60] = home_ids_names[2][1]
-            period_df.iat[i, 63] = home_ids_names[3][0]
-            period_df.iat[i, 62] = home_ids_names[3][1]
-            period_df.iat[i, 65] = home_ids_names[4][0]
-            period_df.iat[i, 64] = home_ids_names[4][1]
-            period_df.iat[i, 67] = away_ids_names[0][0]
-            period_df.iat[i, 66] = away_ids_names[0][1]
-            period_df.iat[i, 69] = away_ids_names[1][0]
-            period_df.iat[i, 68] = away_ids_names[1][1]
-            period_df.iat[i, 71] = away_ids_names[2][0]
-            period_df.iat[i, 70] = away_ids_names[2][1]
-            period_df.iat[i, 73] = away_ids_names[3][0]
-            period_df.iat[i, 72] = away_ids_names[3][1]
-            period_df.iat[i, 75] = away_ids_names[4][0]
-            period_df.iat[i, 74] = away_ids_names[4][1]
+            period_df.loc[period_df.index[i], "home_player_1_id"] = home_ids_names[0][0]
+            period_df.loc[period_df.index[i], "home_player_1"] = home_ids_names[0][1]
+            period_df.loc[period_df.index[i], "home_player_2_id"] = home_ids_names[1][0]
+            period_df.loc[period_df.index[i], "home_player_2"] = home_ids_names[1][1]
+            period_df.loc[period_df.index[i], "home_player_3_id"] = home_ids_names[2][0]
+            period_df.loc[period_df.index[i], "home_player_3"] = home_ids_names[2][1]
+            period_df.loc[period_df.index[i], "home_player_4_id"] = home_ids_names[3][0]
+            period_df.loc[period_df.index[i], "home_player_4"] = home_ids_names[3][1]
+            period_df.loc[period_df.index[i], "home_player_5_id"] = home_ids_names[4][0]
+            period_df.loc[period_df.index[i], "home_player_5"] = home_ids_names[4][1]
+            period_df.loc[period_df.index[i], "away_player_1_id"] = away_ids_names[0][0]
+            period_df.loc[period_df.index[i], "away_player_1"] = away_ids_names[0][1]
+            period_df.loc[period_df.index[i], "away_player_2_id"] = away_ids_names[1][0]
+            period_df.loc[period_df.index[i], "away_player_2"] = away_ids_names[1][1]
+            period_df.loc[period_df.index[i], "away_player_3_id"] = away_ids_names[2][0]
+            period_df.loc[period_df.index[i], "away_player_3"] = away_ids_names[2][1]
+            period_df.loc[period_df.index[i], "away_player_4_id"] = away_ids_names[3][0]
+            period_df.loc[period_df.index[i], "away_player_4"] = away_ids_names[3][1]
+            period_df.loc[period_df.index[i], "away_player_5_id"] = away_ids_names[4][0]
+            period_df.loc[period_df.index[i], "away_player_5"] = away_ids_names[4][1]
         elif (
             period_df.iloc[i, :]["event_type_de"] == "substitution"
             and pd.isnull(period_df.iloc[i, :]["homedescription"]) == 1
@@ -640,47 +539,47 @@ def get_lineup(period_df, lineups, dataframe):
                 if ids[0] != period_df.iloc[i, :]["player1_id"]
             ]
             away_ids_names.append((period_df.iloc[i, 20], period_df.iloc[i, 21]))
-            period_df.iat[i, 57] = home_ids_names[0][0]
-            period_df.iat[i, 56] = home_ids_names[0][1]
-            period_df.iat[i, 59] = home_ids_names[1][0]
-            period_df.iat[i, 58] = home_ids_names[1][1]
-            period_df.iat[i, 61] = home_ids_names[2][0]
-            period_df.iat[i, 60] = home_ids_names[2][1]
-            period_df.iat[i, 63] = home_ids_names[3][0]
-            period_df.iat[i, 62] = home_ids_names[3][1]
-            period_df.iat[i, 65] = home_ids_names[4][0]
-            period_df.iat[i, 64] = home_ids_names[4][1]
-            period_df.iat[i, 67] = away_ids_names[0][0]
-            period_df.iat[i, 66] = away_ids_names[0][1]
-            period_df.iat[i, 69] = away_ids_names[1][0]
-            period_df.iat[i, 68] = away_ids_names[1][1]
-            period_df.iat[i, 71] = away_ids_names[2][0]
-            period_df.iat[i, 70] = away_ids_names[2][1]
-            period_df.iat[i, 73] = away_ids_names[3][0]
-            period_df.iat[i, 72] = away_ids_names[3][1]
-            period_df.iat[i, 75] = away_ids_names[4][0]
-            period_df.iat[i, 74] = away_ids_names[4][1]
+            period_df.loc[period_df.index[i], "home_player_1_id"] = home_ids_names[0][0]
+            period_df.loc[period_df.index[i], "home_player_1"] = home_ids_names[0][1]
+            period_df.loc[period_df.index[i], "home_player_2_id"] = home_ids_names[1][0]
+            period_df.loc[period_df.index[i], "home_player_2"] = home_ids_names[1][1]
+            period_df.loc[period_df.index[i], "home_player_3_id"] = home_ids_names[2][0]
+            period_df.loc[period_df.index[i], "home_player_3"] = home_ids_names[2][1]
+            period_df.loc[period_df.index[i], "home_player_4_id"] = home_ids_names[3][0]
+            period_df.loc[period_df.index[i], "home_player_4"] = home_ids_names[3][1]
+            period_df.loc[period_df.index[i], "home_player_5_id"] = home_ids_names[4][0]
+            period_df.loc[period_df.index[i], "home_player_5"] = home_ids_names[4][1]
+            period_df.loc[period_df.index[i], "away_player_1_id"] = away_ids_names[0][0]
+            period_df.loc[period_df.index[i], "away_player_1"] = away_ids_names[0][1]
+            period_df.loc[period_df.index[i], "away_player_2_id"] = away_ids_names[1][0]
+            period_df.loc[period_df.index[i], "away_player_2"] = away_ids_names[1][1]
+            period_df.loc[period_df.index[i], "away_player_3_id"] = away_ids_names[2][0]
+            period_df.loc[period_df.index[i], "away_player_3"] = away_ids_names[2][1]
+            period_df.loc[period_df.index[i], "away_player_4_id"] = away_ids_names[3][0]
+            period_df.loc[period_df.index[i], "away_player_4"] = away_ids_names[3][1]
+            period_df.loc[period_df.index[i], "away_player_5_id"] = away_ids_names[4][0]
+            period_df.loc[period_df.index[i], "away_player_5"] = away_ids_names[4][1]
         else:
-            period_df.iat[i, 57] = home_ids_names[0][0]
-            period_df.iat[i, 56] = home_ids_names[0][1]
-            period_df.iat[i, 59] = home_ids_names[1][0]
-            period_df.iat[i, 58] = home_ids_names[1][1]
-            period_df.iat[i, 61] = home_ids_names[2][0]
-            period_df.iat[i, 60] = home_ids_names[2][1]
-            period_df.iat[i, 63] = home_ids_names[3][0]
-            period_df.iat[i, 62] = home_ids_names[3][1]
-            period_df.iat[i, 65] = home_ids_names[4][0]
-            period_df.iat[i, 64] = home_ids_names[4][1]
-            period_df.iat[i, 67] = away_ids_names[0][0]
-            period_df.iat[i, 66] = away_ids_names[0][1]
-            period_df.iat[i, 69] = away_ids_names[1][0]
-            period_df.iat[i, 68] = away_ids_names[1][1]
-            period_df.iat[i, 71] = away_ids_names[2][0]
-            period_df.iat[i, 70] = away_ids_names[2][1]
-            period_df.iat[i, 73] = away_ids_names[3][0]
-            period_df.iat[i, 72] = away_ids_names[3][1]
-            period_df.iat[i, 75] = away_ids_names[4][0]
-            period_df.iat[i, 74] = away_ids_names[4][1]
+            period_df.loc[period_df.index[i], "home_player_1_id"] = home_ids_names[0][0]
+            period_df.loc[period_df.index[i], "home_player_1"] = home_ids_names[0][1]
+            period_df.loc[period_df.index[i], "home_player_2_id"] = home_ids_names[1][0]
+            period_df.loc[period_df.index[i], "home_player_2"] = home_ids_names[1][1]
+            period_df.loc[period_df.index[i], "home_player_3_id"] = home_ids_names[2][0]
+            period_df.loc[period_df.index[i], "home_player_3"] = home_ids_names[2][1]
+            period_df.loc[period_df.index[i], "home_player_4_id"] = home_ids_names[3][0]
+            period_df.loc[period_df.index[i], "home_player_4"] = home_ids_names[3][1]
+            period_df.loc[period_df.index[i], "home_player_5_id"] = home_ids_names[4][0]
+            period_df.loc[period_df.index[i], "home_player_5"] = home_ids_names[4][1]
+            period_df.loc[period_df.index[i], "away_player_1_id"] = away_ids_names[0][0]
+            period_df.loc[period_df.index[i], "away_player_1"] = away_ids_names[0][1]
+            period_df.loc[period_df.index[i], "away_player_2_id"] = away_ids_names[1][0]
+            period_df.loc[period_df.index[i], "away_player_2"] = away_ids_names[1][1]
+            period_df.loc[period_df.index[i], "away_player_3_id"] = away_ids_names[2][0]
+            period_df.loc[period_df.index[i], "away_player_3"] = away_ids_names[2][1]
+            period_df.loc[period_df.index[i], "away_player_4_id"] = away_ids_names[3][0]
+            period_df.loc[period_df.index[i], "away_player_4"] = away_ids_names[3][1]
+            period_df.loc[period_df.index[i], "away_player_5_id"] = away_ids_names[4][0]
+            period_df.loc[period_df.index[i], "away_player_5"] = away_ids_names[4][1]
 
     return period_df
 
