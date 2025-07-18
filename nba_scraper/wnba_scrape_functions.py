@@ -10,7 +10,6 @@ import sys
 import json
 import datetime
 import requests
-import time
 import pandas as pd
 import numpy as np
 
@@ -23,16 +22,16 @@ from nba_scraper.stat_calc_functions import (
     wnba_points_made,
 )
 
-USER_AGENT = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:72.0) Gecko/20100101 Firefox/72.0",
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.5",
-    "X-NewRelic-ID": "VQECWF5UChAHUlNTBwgBVw==",
-    "x-nba-stats-origin": "stats",
-    "x-nba-stats-token": "true",
-    "Connection": "keep-alive",
-    "Referer": "https://stats.nba.com/",
-}
+SESSION = requests.Session()
+SESSION.headers.update(
+    {
+        "User-Agent": requests.utils.default_user_agent(),
+        "Accept": "application/json, text/plain, */*",
+        "x-nba-stats-origin": "stats",
+        "x-nba-stats-token": "true",
+        "Referer": "https://www.wnba.com",
+    }
+)
 
 
 def get_player_name(player_id):
@@ -46,7 +45,7 @@ def get_player_name(player_id):
     player_name - full name of player with given player_id
     """
     player_url = f"https://a.data.nba.com/wnba/player/{player_id}"
-    player_data = requests.get(player_url, headers=USER_AGENT)
+    player_data = SESSION.get(player_url)
     player_dict = json.loads(player_data.text)
     player_name = (
         f"{player_dict['data']['info']['fn']} {player_dict['data']['info']['ln']}"
@@ -71,7 +70,7 @@ def get_team_ids(pbp_df):
     print(team_ids)
     team_ids = [t for t in team_ids if t > 0]
     team_url = f"https://stats.wnba.com/stats/teamdetails?TeamID={team_ids[0]}"
-    team_data = requests.get(team_url, headers=USER_AGENT)
+    team_data = SESSION.get(team_url)
     team_data = json.loads(team_data.text)
     print(team_data)
 
@@ -86,23 +85,24 @@ def get_team_ids(pbp_df):
     return home_team_id, away_team_id
 
 
-def get_wnba_pbp_api(game_id, quarter, season):
+def get_wnba_pbp_api(game_id):
     """
     function gets both JSON requests from the two different APIs if both
     are available and only the stats.nba.com api if not.
 
     Inputs:
     game_id          - String representing game id
-    quarter          - number representing what quarter you want
-    season           - number in the format of YYYY representing what the season is
 
     Outputs:
     wnba_dict         - Dictionary of the JSON response from data.wnba.com api
     """
-    wnba_api_url = f"https://data.wnba.com/data/5s/v2015/json/mobile_teams/wnba/{season}/scores/pbp/1{game_id}_{quarter}_pbp.json"
+    wnba_api_url = (
+        "https://cdn.wnba.com/static/json/liveData/playbyplay/"
+        f"playbyplay_{game_id}.json"
+    )
 
     try:
-        wnba_rep = requests.get(wnba_api_url)
+        wnba_rep = SESSION.get(wnba_api_url)
     except json.decoder.JSONDecodeError as ex:
         print(ex)
         print(f"This is the stats.nba.com API's output: {wnba_rep.text}")
@@ -119,35 +119,20 @@ def parse_wnba_pbp(game_id):
 
     Inputs:
     game_id     - Id of game to be parsed
-    season      - seaosn game is being played in
 
     Outputs:
     wnba_pbp_df   - wnba play by play dataframe
     """
 
-    if game_id[2:4] in ["98", "99"]:
-        season = f"19{game_id[2:4]}"
-    else:
-        season = f"20{game_id[2:4]}"
-    results = []
-    for x in range(1, 15):
-        try:
-            results.append(get_wnba_pbp_api(game_id, x, season))
-        except ValueError:
-            break
-    dfs = []
-    for period, v2_dict in enumerate(results):
-        pbp_v2_df = pd.DataFrame(v2_dict["g"]["pla"])
-        pbp_v2_df.columns = list(map(str.lower, pbp_v2_df.columns))
-        pbp_v2_df["period"] = period + 1
-        dfs.append(pbp_v2_df)
+    result = get_wnba_pbp_api(game_id)
+    pbp_v2_df = pd.DataFrame(result["game"]["actions"])
+    pbp_v2_df.columns = list(map(str.lower, pbp_v2_df.columns))
+    pbp_df = pbp_v2_df
 
-    pbp_df = pd.concat(dfs)
-
-    pbp_df["game_date"] = results[0]["g"]["gcode"].split("/")[0]
+    pbp_df["game_date"] = result["game"]["gameId"][0:8]
     pbp_df["game_date"] = pd.to_datetime(pbp_df["game_date"], format="%Y%m%d")
-    pbp_df["away_team_abbrev"] = results[0]["g"]["gcode"].split("/")[1][:3]
-    pbp_df["home_team_abbrev"] = results[0]["g"]["gcode"].split("/")[1][3:]
+    pbp_df["away_team_abbrev"] = result["game"]["awayTeam"]["teamTricode"]
+    pbp_df["home_team_abbrev"] = result["game"]["homeTeam"]["teamTricode"]
     pbp_df["seconds_elapsed"] = pbp_df.apply(wnba_seconds_elapsed, axis=1)
     pbp_df["shot_type"] = pbp_df.apply(wnba_shot_types, axis=1)
     pbp_df["game_id"] = game_id
@@ -228,12 +213,12 @@ def get_wnba_lineup(game_id, period):
     end_range = start_range + 2000
 
     url = (
-        f"https://stats.wnba.com/stats/boxscoreadvancedv2/?gameId=1{game_id}&"
+        f"https://stats.wnba.com/stats/boxscoreadvancedv3/?gameId=1{game_id}&"
         f"startPeriod={period}&endPeriod={period}&startRange={start_range}&"
         f"endRange={end_range}&rangeType=2"
     )
 
-    lineups_req = requests.get(url, headers=USER_AGENT)
+    lineups_req = SESSION.get(url)
     lineup_req_dict = json.loads(lineups_req.text)
 
     return lineup_req_dict
@@ -423,30 +408,30 @@ def get_lineup(period_df, lineups, dataframe):
             player_url = (
                 f"https://a.data.nba.com/wnba/player/{period_df.iloc[i, :]['epid']}"
             )
-            player_data = requests.get(player_url, headers=USER_AGENT)
+            player_data = SESSION.get(player_url)
             player_dict = json.loads(player_data.text)
             player_name = f"{player_dict['data']['info']['fn']} {player_dict['data']['info']['ln']}"
             home_ids_names.append((period_df.iloc[i, :]["epid"], player_name))
-            period_df.iat[i, 39] = home_ids_names[0][0]
-            period_df.iat[i, 38] = home_ids_names[0][1]
-            period_df.iat[i, 41] = home_ids_names[1][0]
-            period_df.iat[i, 40] = home_ids_names[1][1]
-            period_df.iat[i, 43] = home_ids_names[2][0]
-            period_df.iat[i, 42] = home_ids_names[2][1]
-            period_df.iat[i, 45] = home_ids_names[3][0]
-            period_df.iat[i, 44] = home_ids_names[3][1]
-            period_df.iat[i, 47] = home_ids_names[4][0]
-            period_df.iat[i, 46] = home_ids_names[4][1]
-            period_df.iat[i, 49] = away_ids_names[0][0]
-            period_df.iat[i, 48] = away_ids_names[0][1]
-            period_df.iat[i, 51] = away_ids_names[1][0]
-            period_df.iat[i, 50] = away_ids_names[1][1]
-            period_df.iat[i, 53] = away_ids_names[2][0]
-            period_df.iat[i, 52] = away_ids_names[2][1]
-            period_df.iat[i, 55] = away_ids_names[3][0]
-            period_df.iat[i, 54] = away_ids_names[3][1]
-            period_df.iat[i, 57] = away_ids_names[4][0]
-            period_df.iat[i, 56] = away_ids_names[4][1]
+            period_df.loc[period_df.index[i], "home_player_1_id"] = home_ids_names[0][0]
+            period_df.loc[period_df.index[i], "home_player_1"] = home_ids_names[0][1]
+            period_df.loc[period_df.index[i], "home_player_2_id"] = home_ids_names[1][0]
+            period_df.loc[period_df.index[i], "home_player_2"] = home_ids_names[1][1]
+            period_df.loc[period_df.index[i], "home_player_3_id"] = home_ids_names[2][0]
+            period_df.loc[period_df.index[i], "home_player_3"] = home_ids_names[2][1]
+            period_df.loc[period_df.index[i], "home_player_4_id"] = home_ids_names[3][0]
+            period_df.loc[period_df.index[i], "home_player_4"] = home_ids_names[3][1]
+            period_df.loc[period_df.index[i], "home_player_5_id"] = home_ids_names[4][0]
+            period_df.loc[period_df.index[i], "home_player_5"] = home_ids_names[4][1]
+            period_df.loc[period_df.index[i], "away_player_1_id"] = away_ids_names[0][0]
+            period_df.loc[period_df.index[i], "away_player_1"] = away_ids_names[0][1]
+            period_df.loc[period_df.index[i], "away_player_2_id"] = away_ids_names[1][0]
+            period_df.loc[period_df.index[i], "away_player_2"] = away_ids_names[1][1]
+            period_df.loc[period_df.index[i], "away_player_3_id"] = away_ids_names[2][0]
+            period_df.loc[period_df.index[i], "away_player_3"] = away_ids_names[2][1]
+            period_df.loc[period_df.index[i], "away_player_4_id"] = away_ids_names[3][0]
+            period_df.loc[period_df.index[i], "away_player_4"] = away_ids_names[3][1]
+            period_df.loc[period_df.index[i], "away_player_5_id"] = away_ids_names[4][0]
+            period_df.loc[period_df.index[i], "away_player_5"] = away_ids_names[4][1]
         elif (
             period_df.iloc[i, :]["event_type_de"] == "substitution"
             and period_df.iloc[i, :]["tid"] == away_team
@@ -457,51 +442,51 @@ def get_lineup(period_df, lineups, dataframe):
             player_url = (
                 f"https://a.data.nba.com/wnba/player/{period_df.iloc[i, :]['epid']}"
             )
-            player_data = requests.get(player_url, headers=USER_AGENT)
+            player_data = SESSION.get(player_url)
             player_dict = json.loads(player_data.text)
             player_name = f"{player_dict['data']['info']['fn']} {player_dict['data']['info']['ln']}"
             away_ids_names.append((period_df.iloc[i, :]["epid"], player_name))
-            period_df.iat[i, 39] = home_ids_names[0][0]
-            period_df.iat[i, 38] = home_ids_names[0][1]
-            period_df.iat[i, 41] = home_ids_names[1][0]
-            period_df.iat[i, 40] = home_ids_names[1][1]
-            period_df.iat[i, 43] = home_ids_names[2][0]
-            period_df.iat[i, 42] = home_ids_names[2][1]
-            period_df.iat[i, 45] = home_ids_names[3][0]
-            period_df.iat[i, 44] = home_ids_names[3][1]
-            period_df.iat[i, 47] = home_ids_names[4][0]
-            period_df.iat[i, 46] = home_ids_names[4][1]
-            period_df.iat[i, 49] = away_ids_names[0][0]
-            period_df.iat[i, 48] = away_ids_names[0][1]
-            period_df.iat[i, 51] = away_ids_names[1][0]
-            period_df.iat[i, 50] = away_ids_names[1][1]
-            period_df.iat[i, 53] = away_ids_names[2][0]
-            period_df.iat[i, 52] = away_ids_names[2][1]
-            period_df.iat[i, 55] = away_ids_names[3][0]
-            period_df.iat[i, 54] = away_ids_names[3][1]
-            period_df.iat[i, 57] = away_ids_names[4][0]
-            period_df.iat[i, 56] = away_ids_names[4][1]
+            period_df.loc[period_df.index[i], "home_player_1_id"] = home_ids_names[0][0]
+            period_df.loc[period_df.index[i], "home_player_1"] = home_ids_names[0][1]
+            period_df.loc[period_df.index[i], "home_player_2_id"] = home_ids_names[1][0]
+            period_df.loc[period_df.index[i], "home_player_2"] = home_ids_names[1][1]
+            period_df.loc[period_df.index[i], "home_player_3_id"] = home_ids_names[2][0]
+            period_df.loc[period_df.index[i], "home_player_3"] = home_ids_names[2][1]
+            period_df.loc[period_df.index[i], "home_player_4_id"] = home_ids_names[3][0]
+            period_df.loc[period_df.index[i], "home_player_4"] = home_ids_names[3][1]
+            period_df.loc[period_df.index[i], "home_player_5_id"] = home_ids_names[4][0]
+            period_df.loc[period_df.index[i], "home_player_5"] = home_ids_names[4][1]
+            period_df.loc[period_df.index[i], "away_player_1_id"] = away_ids_names[0][0]
+            period_df.loc[period_df.index[i], "away_player_1"] = away_ids_names[0][1]
+            period_df.loc[period_df.index[i], "away_player_2_id"] = away_ids_names[1][0]
+            period_df.loc[period_df.index[i], "away_player_2"] = away_ids_names[1][1]
+            period_df.loc[period_df.index[i], "away_player_3_id"] = away_ids_names[2][0]
+            period_df.loc[period_df.index[i], "away_player_3"] = away_ids_names[2][1]
+            period_df.loc[period_df.index[i], "away_player_4_id"] = away_ids_names[3][0]
+            period_df.loc[period_df.index[i], "away_player_4"] = away_ids_names[3][1]
+            period_df.loc[period_df.index[i], "away_player_5_id"] = away_ids_names[4][0]
+            period_df.loc[period_df.index[i], "away_player_5"] = away_ids_names[4][1]
         else:
-            period_df.iat[i, 39] = home_ids_names[0][0]
-            period_df.iat[i, 38] = home_ids_names[0][1]
-            period_df.iat[i, 41] = home_ids_names[1][0]
-            period_df.iat[i, 40] = home_ids_names[1][1]
-            period_df.iat[i, 43] = home_ids_names[2][0]
-            period_df.iat[i, 42] = home_ids_names[2][1]
-            period_df.iat[i, 45] = home_ids_names[3][0]
-            period_df.iat[i, 44] = home_ids_names[3][1]
-            period_df.iat[i, 47] = home_ids_names[4][0]
-            period_df.iat[i, 46] = home_ids_names[4][1]
-            period_df.iat[i, 49] = away_ids_names[0][0]
-            period_df.iat[i, 48] = away_ids_names[0][1]
-            period_df.iat[i, 51] = away_ids_names[1][0]
-            period_df.iat[i, 50] = away_ids_names[1][1]
-            period_df.iat[i, 53] = away_ids_names[2][0]
-            period_df.iat[i, 52] = away_ids_names[2][1]
-            period_df.iat[i, 55] = away_ids_names[3][0]
-            period_df.iat[i, 54] = away_ids_names[3][1]
-            period_df.iat[i, 57] = away_ids_names[4][0]
-            period_df.iat[i, 56] = away_ids_names[4][1]
+            period_df.loc[period_df.index[i], "home_player_1_id"] = home_ids_names[0][0]
+            period_df.loc[period_df.index[i], "home_player_1"] = home_ids_names[0][1]
+            period_df.loc[period_df.index[i], "home_player_2_id"] = home_ids_names[1][0]
+            period_df.loc[period_df.index[i], "home_player_2"] = home_ids_names[1][1]
+            period_df.loc[period_df.index[i], "home_player_3_id"] = home_ids_names[2][0]
+            period_df.loc[period_df.index[i], "home_player_3"] = home_ids_names[2][1]
+            period_df.loc[period_df.index[i], "home_player_4_id"] = home_ids_names[3][0]
+            period_df.loc[period_df.index[i], "home_player_4"] = home_ids_names[3][1]
+            period_df.loc[period_df.index[i], "home_player_5_id"] = home_ids_names[4][0]
+            period_df.loc[period_df.index[i], "home_player_5"] = home_ids_names[4][1]
+            period_df.loc[period_df.index[i], "away_player_1_id"] = away_ids_names[0][0]
+            period_df.loc[period_df.index[i], "away_player_1"] = away_ids_names[0][1]
+            period_df.loc[period_df.index[i], "away_player_2_id"] = away_ids_names[1][0]
+            period_df.loc[period_df.index[i], "away_player_2"] = away_ids_names[1][1]
+            period_df.loc[period_df.index[i], "away_player_3_id"] = away_ids_names[2][0]
+            period_df.loc[period_df.index[i], "away_player_3"] = away_ids_names[2][1]
+            period_df.loc[period_df.index[i], "away_player_4_id"] = away_ids_names[3][0]
+            period_df.loc[period_df.index[i], "away_player_4"] = away_ids_names[3][1]
+            period_df.loc[period_df.index[i], "away_player_5_id"] = away_ids_names[4][0]
+            period_df.loc[period_df.index[i], "away_player_5"] = away_ids_names[4][1]
 
     return period_df
 

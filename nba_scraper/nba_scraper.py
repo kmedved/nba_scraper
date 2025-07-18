@@ -5,6 +5,7 @@ import pandas as pd
 # TODO fix import for get_game_date which is now stored in helper_functions.py
 import nba_scraper.scrape_functions as sf
 import nba_scraper.wnba_scrape_functions as wsf
+import nba_scraper.helper_functions as hf
 
 
 def check_format(data_format):
@@ -70,7 +71,7 @@ def scrape_date_range(
     check_format(data_format)
     check_valid_dates(date_from, date_to)
 
-    game_ids = sf.get_date_games(date_from, date_to)
+    game_ids = hf.get_date_games(date_from, date_to)
     scraped_games = []
 
     for game in game_ids:

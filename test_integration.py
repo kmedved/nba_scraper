@@ -2,6 +2,7 @@
 These are integration tests of the API calls to the NBA api
 """
 import nba_scraper.scrape_functions as sf
+import nba_scraper.helper_functions as hf
 
 
 def test_pbp_request():
@@ -42,9 +43,9 @@ def test_get_date_games():
         "0021800172",
         "0021800173",
     ]
-    game_ids_1 = sf.get_date_games("2018-10-16", "2018-10-16")
-    game_ids_2 = sf.get_date_games("2018-10-18", "2018-10-18")
-    game_ids_3 = sf.get_date_games("2018-11-08", "2018-11-09")
+    game_ids_1 = hf.get_date_games("2018-10-16", "2018-10-16")
+    game_ids_2 = hf.get_date_games("2018-10-18", "2018-10-18")
+    game_ids_3 = hf.get_date_games("2018-11-08", "2018-11-09")
     assert game_ids_1 == correct_ids_1
     assert game_ids_2 == correct_ids_2
     assert game_ids_3 == correct_ids_3

@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nba_scraper"
+version = "1.0.10"
+authors = [
+    { name = "Matthew Barlowe", email = "matt@barloweanalytics.com" }
+]
+description = "A Python package to scrape the NBA API and return play by play data"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {file = "LICENSE"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "pandas>=2.3,<2.4",
+    "numpy>=2.3,<2.4",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+tests = [
+    "pytest>=7",
+    "pytest-cov>=4",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["nba_scraper"]
