@@ -288,6 +288,29 @@ def attach_lineups(
     for pid, name in _name_map_from_box_and_pbp(box_json or {}, pbp_json).items():
         name_map[pid] = name
 
+    # Backfill missing player names using any IDs we already captured.
+    for id_col, name_col in [
+        ("player1_id", "player1_name"),
+        ("player2_id", "player2_name"),
+        ("player3_id", "player3_name"),
+    ]:
+        if id_col in df.columns and name_col in df.columns:
+            mask = df[name_col].isna() | (df[name_col] == "")
+
+            def _map_backfill(value: Any) -> str:
+                if pd.isna(value):
+                    return ""
+                try:
+                    pid_int = int(value)
+                except (TypeError, ValueError):
+                    return ""
+                if pid_int in name_map:
+                    return name_map.get(pid_int, "")
+                return ""
+
+            if mask.any():
+                df.loc[mask, name_col] = df.loc[mask, id_col].map(_map_backfill)
+
     def _lookup_name(value: Any) -> str:
         if pd.isna(value):
             return ""
