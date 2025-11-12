@@ -13,6 +13,7 @@ DESC_SYNONYMS = {
     "pull up": "pullup",
     "fade away": "fadeaway",
     "put back": "putback",
+    "tip": "tipin",
     "tip in": "tipin",
 }
 
@@ -29,6 +30,7 @@ STYLE_TOKENS = {
     "fingerroll",
     "tipin",
     "putback",
+    "cutting",
 }
 
 _ws_re = re.compile(r"\s+")

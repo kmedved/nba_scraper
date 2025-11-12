@@ -403,7 +403,7 @@ def parse_v2_to_rows(v2_json: Dict, mapping_yaml_path: Optional[str] = None) -> 
 
     df = pd.DataFrame(rows, columns=_CANONICAL_COLUMNS)
     df = df.sort_values(["period", "seconds_elapsed", "order_number"], kind="mergesort")
-    df["event_length"] = df.groupby("period")["seconds_elapsed"].diff(-1).abs()
-    df["event_length"] = df["event_length"].fillna(0)
+    df["event_length"] = df.groupby("period")["seconds_elapsed"].diff()
+    df["event_length"] = df["event_length"].fillna(0).abs()
     df = infer_possession_after(df)
     return df.reset_index(drop=True)
