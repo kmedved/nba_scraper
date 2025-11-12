@@ -69,6 +69,19 @@ def test_cdn_game_date_normalized():
     assert len(val) == 10
 
 
+def test_eventnum_is_numeric():
+    v2 = _load_json("v2_pbp_0021700001.json")
+    df2 = v2_parser.parse_v2_to_rows(v2)
+    assert "eventnum" in df2.columns
+    assert df2["eventnum"].dtype.kind in ("i", "u")
+
+    pbp = _load_json("cdn_playbyplay_0022400001.json")
+    box = _load_json("cdn_boxscore_0022400001.json")
+    dfc = cdn_parser.parse_actions_to_rows(pbp, box)
+    assert "eventnum" in dfc.columns
+    assert dfc["eventnum"].dtype.kind in ("i", "u")
+
+
 def test_v2_parse_basic():
     v2 = _load_json("v2_pbp_0021700001.json")
     df = v2_parser.parse_v2_to_rows(v2)
