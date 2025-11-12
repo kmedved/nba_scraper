@@ -1,21 +1,21 @@
-from setuptools import setup
+from setuptools import find_packages, setup
 
 with open("README.md", "r") as fh:
     long_description = fh.read()
 setup(
     name="nba_scraper",
-    packages=["nba_scraper"],
-    version="1.0.10",
+    packages=find_packages(),
+    version="1.2.0",
     license="GNU General Public License v3.0",
-    description="A Python package to scrape the NBA api and return a play by play file",
+    description="Unified NBA play-by-play scraper for CDN and legacy sources",
     long_description=long_description,
     long_description_content_type="text/markdown",
     author="Matthew Barlowe",
     author_email="matt@barloweanalytics.com",
     url="https://github.com/mcbarlowe/nba_scraper",
-    download_url="https://github.com/mcbarlowe/nba_scraper/archive/v1.0.10.tar.gz",
+    download_url="https://github.com/mcbarlowe/nba_scraper/archive/v1.2.0.tar.gz",
     keywords=["basketball", "NBA", "scraper"],
-    install_requires=["requests", "pandas", "numpy"],
+    install_requires=["requests", "pandas", "numpy", "pyyaml"],
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Science/Research",

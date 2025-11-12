@@ -1,104 +1,86 @@
-# this will catalog the shot types recorded in the NBA play by play
-# not sure how accurate this is it seems to change for the same shots
-# I think I have them all added but could be wrong.
-# TODO get all the shot types from the hackathon data they sent out and update
-# this dictionary
-import datetime
-import time
-import requests
+"""Helper utilities for the nba_scraper package."""
+from __future__ import annotations
+
+import datetime as dt
+from typing import List
+
+from . import cdn_client
+
+SECONDS_PER_PERIOD = 720
+SECONDS_PER_OT = 300
 
 
-# this dictionary will categorize the event types that happen in the NBA
-# play by play
-EVENT_TYPE_DICT = {
-    1: "shot",
-    2: "missed_shot",
-    4: "rebound",
-    5: "turnover",
-    20: "stoppage: out-of-bounds",
-    6: "foul",
-    3: "free-throw",
-    8: "substitution",
-    12: "period-start",
-    10: "jump-ball",
-    9: "team-timeout",
-    18: "instant-replay",
-    13: "period-end",
-    7: "goal-tending",
-    0: "game-end",
-}
+def iso_clock_to_pctimestring(iso_clock: str | None) -> str:
+    if not iso_clock:
+        return "12:00"
+    iso_clock = iso_clock.strip().upper()
+    if not iso_clock.startswith("PT"):
+        return iso_clock
+    minutes = 12
+    seconds = 0
+    if "M" in iso_clock:
+        try:
+            minutes_part = iso_clock.split("PT")[1].split("M")[0]
+            minutes = int(float(minutes_part))
+        except (IndexError, ValueError):
+            minutes = 0
+    if "S" in iso_clock:
+        try:
+            seconds_part = iso_clock.split("M")[-1].split("S")[0]
+            seconds = int(float(seconds_part))
+        except (IndexError, ValueError):
+            seconds = 0
+    return f"{minutes:02d}:{seconds:02d}"
 
 
-def get_date_games(from_date, to_date):
-    """
-    Get all the game_ids in a valid date range
+def _period_base_seconds(period: int) -> int:
+    if period <= 4:
+        return SECONDS_PER_PERIOD * (period - 1)
+    return SECONDS_PER_PERIOD * 4 + SECONDS_PER_OT * (period - 5)
 
-    Inputs:
-    date_from   - Date to scrape from
-    date_to     - Date to scrape to
 
-    Outputs:
-    game_ids - List of game_ids in range
-    """
-    game_ids = []
-    from_date = datetime.datetime.strptime(from_date, "%Y-%m-%d")
-    to_date = datetime.datetime.strptime(to_date, "%Y-%m-%d")
+def seconds_elapsed(period: int, pctimestring: str) -> int:
+    if period is None:
+        return 0
+    try:
+        minutes, seconds = map(int, pctimestring.split(":"))
+    except Exception:
+        minutes, seconds = 0, 0
+    total_in_period = SECONDS_PER_PERIOD if period <= 4 else SECONDS_PER_OT
+    remaining = minutes * 60 + seconds
+    elapsed_in_period = total_in_period - remaining
+    return _period_base_seconds(int(period)) + elapsed_in_period
 
-    # Must check each season in between date range
-    for season in range(get_season(from_date), get_season(to_date) + 1):
-        url = (
-            "http://data.nba.com/data/10s/v2015/json/mobile_teams"
-            f"/nba/{season}/league/00_full_schedule.json"
+
+def get_date_games(from_date: str, to_date: str) -> List[str]:
+    start = dt.datetime.strptime(from_date, "%Y-%m-%d").date()
+    end = dt.datetime.strptime(to_date, "%Y-%m-%d").date()
+    if start.year < 2019:
+        raise ValueError(
+            "CDN schedule only supports 2019+ seasons; use scrape_from_files for older games."
         )
-        schedule = requests.get(url).json()
-        time.sleep(1)
 
-        for month in schedule["lscd"]:
-            if month["mscd"]["g"]:
-                # Assume games in order so first in list is first game in month
-                cur_month = datetime.datetime.strptime(
-                    month["mscd"]["g"][0]["gdte"], "%Y-%m-%d"
-                )
-
-                # If first game in month doesn't fall in range no need to check each game for rest of month
-                # Convert from_date to beginning of month as that is where cur_month starts
-                if (
-                    to_date
-                    >= cur_month
-                    >= (from_date - datetime.timedelta(from_date.day - 1))
-                ):
-                    for game in month["mscd"]["g"]:
-                        # print(game['gdte'])
-                        # Check if individual game in date range
-                        if (
-                            to_date
-                            >= datetime.datetime.strptime(game["gdte"], "%Y-%m-%d")
-                            >= from_date
-                        ):
-                            game_ids.append(game["gid"])
+    schedule = cdn_client.fetch_schedule()
+    game_dates = schedule.get("leagueSchedule", {}).get("gameDates", [])
+    game_ids: List[str] = []
+    for entry in game_dates:
+        date_str = entry.get("gameDate")
+        if not date_str:
+            continue
+        try:
+            entry_date = dt.datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if start <= entry_date <= end:
+            for game in entry.get("games", []):
+                gid = game.get("gameId") or game.get("gameID")
+                if gid:
+                    game_ids.append(str(gid))
     return game_ids
 
 
-def get_season(date):
-    """
-    Get Season based on date
-
-    Inputs:
-    date  -  time_struct of date
-
-    Outputs:
-    season - e.g. 2018
-    """
-    year = str(date.year)[:4]
-
-    # TODO Refactor this I don't think we need all these if/else statements
-    if date > datetime.datetime.strptime("-".join([year, "01-01"]), "%Y-%m-%d"):
-        if date < datetime.datetime.strptime("-".join([year, "09-01"]), "%Y-%m-%d"):
-            return int(year) - 1
-        else:
-            return int(year)
-    else:
-        if date > datetime.datetime.strptime("-".join([year, "07-01"]), "%Y-%m-%d"):
-            return int(year)
-        else:
-            return int(year) - 1
+def get_season(date: dt.datetime) -> int:
+    year = date.year
+    if date.month < 7:
+        return year - 1
+    return year

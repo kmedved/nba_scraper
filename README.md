@@ -14,16 +14,10 @@ has two main functions `scrape_game` which scrapes an individual game or a list
 of specific games, and `scrape_season` which scrapes an entire season of regular
 season games.
 
-The scraper goes back to the 1999-2000 season and will pull the play by play along
-with who was on the court at the time of each play. Some other various statistics may
-be calculated as well.
-
-As of version 1.0.8 the scraper will now scrape WNBA games as well as NBA games.
-Just call `wnba_scrape_game` instead of `scrape_game`. The parameters and usage is
-exactly the same as `scrape_game` function. As of right now I know it goes
-back to the 2005 season maybe further just haven't tested.
-Be warned it is much slower than the nba scraper due to the extra api calls
-needed to pull in player names that are readily available in the NBA api itself.
+The scraper now supports both the modern NBA CDN live data feeds (2019 and later)
+and legacy v2 JSON archives. No matter the source, results are normalised to a
+canonical schema that includes structured shot metadata, team context and on-court
+lineups computed from the play-by-play itself.
 
 # Installation
 
@@ -50,6 +44,13 @@ users home directory you can change this with the `data_dir` parameter
     # if you want a csv if you don't pass a file path the default is home
     # directory
     ns.scrape_game([21800001, 21800002], data_format='csv', data_dir='file/path')
+
+## `scrape_from_files`
+
+Local CDN JSON pairs or legacy v2 JSON dumps can be parsed directly:
+
+    ns.scrape_from_files('playbyplay.json', 'boxscore.json', kind='cdn_local')
+    ns.scrape_from_files('0021700001.json', kind='v2_local')
 
 ## `scrape_season`
 
