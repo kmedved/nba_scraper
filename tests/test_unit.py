@@ -11,7 +11,8 @@ import pandas as pd
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from nba_scraper import cdn_parser, lineup_builder, v2_parser
+from nba_scraper import cdn_parser, io_sources, lineup_builder, v2_parser
+from nba_scraper.parser_utils import infer_possession_after
 
 FIXTURES = Path(__file__).parent / "test_files"
 
@@ -25,7 +26,7 @@ def test_cdn_parse_basic():
     pbp = _load_json("cdn_playbyplay_0022400001.json")
     box = _load_json("cdn_boxscore_0022400001.json")
     df = cdn_parser.parse_actions_to_rows(pbp, box)
-    df = lineup_builder.attach_lineups(df, box_json=box)
+    df = lineup_builder.attach_lineups(df, box_json=box, pbp_json=pbp)
     assert not df.empty
     assert "home_player_1_id" in df.columns
     assert {"eventnum", "season"}.issubset(df.columns)
@@ -161,21 +162,72 @@ def test_cdn_synth_ft_description(monkeypatch):
     globals()["cdn_parser"] = module
 
 
-def test_lineups_have_ten_players_every_row():
+def test_lineups_have_five_players_every_live_row():
     pbp = _load_json("cdn_playbyplay_0022400001.json")
     box = _load_json("cdn_boxscore_0022400001.json")
-    df = cdn_parser.parse_actions_to_rows(pbp, box)
-    df = lineup_builder.attach_lineups(df, box_json=box)
+    df = io_sources.parse_any((pbp, box), io_sources.SourceKind.CDN_LOCAL)
+    df = lineup_builder.attach_lineups(df, box_json=box, pbp_json=pbp)
 
-    home_cols = [f"home_player_{i}_id" for i in range(1, 6)]
-    away_cols = [f"away_player_{i}_id" for i in range(1, 6)]
-    numeric = (
-        df[home_cols + away_cols]
-        .apply(pd.to_numeric, errors="coerce")
+    live = ~df["event_type_de"].isin(["period", "timeout"])
+    for side in ("home", "away"):
+        cols = [f"{side}_player_{i}_id" for i in range(1, 6)]
+        numeric = (
+            df.loc[live, cols]
+            .apply(pd.to_numeric, errors="coerce")
+            .fillna(0)
+            .astype(int)
+        )
+        assert ((numeric > 0).sum(axis=1) == 5).all()
+
+
+def test_team_fields_filled_on_team_events():
+    pbp = _load_json("cdn_playbyplay_0022400001.json")
+    box = _load_json("cdn_boxscore_0022400001.json")
+    df = io_sources.parse_any((pbp, box), io_sources.SourceKind.CDN_LOCAL)
+
+    team_events = ~df["event_type_de"].isin(["period", "timeout", "jump-ball"])
+    team_ids = (
+        pd.to_numeric(df.loc[team_events, "team_id"], errors="coerce")
         .fillna(0)
         .astype(int)
     )
-    cnt = (numeric > 0).sum(axis=1)
+    assert (team_ids != 0).all()
+    tricodes = df.loc[team_events, "team_tricode"].fillna("")
+    assert (tricodes != "").all()
 
+
+def test_shots_have_xy_or_are_synthesized():
+    pbp = _load_json("cdn_playbyplay_0022400001.json")
+    box = _load_json("cdn_boxscore_0022400001.json")
+    df = io_sources.parse_any((pbp, box), io_sources.SourceKind.CDN_LOCAL)
+
+    shots = df["family"].isin(["2pt", "3pt"])
+    xy_present = shots & df["x"].notna() & df["y"].notna()
+
+    def _has_flag(flags):
+        if isinstance(flags, (list, tuple, set)):
+            return "xy_synth" in flags
+        return False
+
+    synth = shots & df["style_flags"].apply(_has_flag)
+    assert (xy_present | synth)[shots].all()
+
+
+def test_possession_after_filled_between_anchors():
+    pbp = _load_json("cdn_playbyplay_0022400001.json")
+    box = _load_json("cdn_boxscore_0022400001.json")
+    df = io_sources.parse_any((pbp, box), io_sources.SourceKind.CDN_LOCAL)
+    df = infer_possession_after(df)
+
+    by_period = df.groupby(["game_id", "period"])
     live = ~df["event_type_de"].isin(["period", "timeout"])
-    assert (cnt[live] == 10).all()
+    mask = live & df["possession_after"].notna()
+    checks = []
+    for _, group in by_period:
+        live_mask = live.loc[group.index]
+        live_vals = mask.loc[group.index][live_mask]
+        if live_vals.empty:
+            checks.append(True)
+            continue
+        checks.append(live_vals.iloc[1:].all())
+    assert all(checks)

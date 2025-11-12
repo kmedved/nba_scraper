@@ -5,6 +5,56 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+
+def _name_map_from_box_and_pbp(
+    box_json: dict, pbp_json: Optional[dict] = None
+) -> Dict[int, str]:
+    m: Dict[int, str] = {}
+    players = (box_json or {}).get("game", {}).get("players", [])
+    for player in players:
+        pid = player.get("personId")
+        name = (
+            player.get("name")
+            or player.get("firstNameLastName")
+            or player.get("familyName")
+        )
+        if pid and name:
+            m[int(pid)] = str(name)
+    if pbp_json:
+        for action in pbp_json.get("game", {}).get("actions", []):
+            pid = action.get("personId")
+            name = action.get("playerName")
+            if pid and name and int(pid) not in m:
+                m[int(pid)] = str(name)
+    return m
+
+
+def _extract_starters_from_box(box_json: dict) -> Dict[str, List[int]]:
+    def side(key: str) -> List[int]:
+        side_obj = (box_json or {}).get("game", {}).get(key, {})
+        starters: List[int] = []
+        for player in side_obj.get("players", []):
+            pid = player.get("personId")
+            if not pid:
+                continue
+            if player.get("starter") or player.get("starterPosition"):
+                starters.append(int(pid))
+        if len(starters) < 5:
+            pool: List[int] = []
+            for player in side_obj.get("players", []):
+                pid = player.get("personId")
+                if not pid:
+                    continue
+                if player.get("status") == "ACTIVE":
+                    pool.append(int(pid))
+            starters = (
+                starters
+                + [pid for pid in pool if pid not in starters]
+            )[:5]
+        return starters if len(starters) == 5 else []
+
+    return {"home": side("homeTeam"), "away": side("awayTeam")}
+
 _LINEUP_ID_COLUMNS = [
     "home_player_1_id",
     "home_player_2_id",
@@ -60,56 +110,9 @@ def _safe_int(value: Any) -> Optional[int]:
         return None
 
 
-def _player_display_name(player: Dict[str, Any]) -> str:
-    name = player.get("name")
-    if name:
-        return str(name)
-    first = player.get("firstName") or player.get("first_name") or ""
-    last = player.get("lastName") or player.get("last_name") or ""
-    full = f"{first} {last}".strip()
-    return full
-
-
 def extract_starters_from_box(box_json: Dict[str, Any]) -> Dict[str, List[int]]:
     """Extract starter ids for each team from a CDN box score payload."""
-
-    def side(team: str) -> List[int]:
-        players = (
-            box_json.get("game", {})
-            .get(team, {})
-            .get("players", [])
-        )
-        starters: List[int] = []
-        for player in players:
-            pid = _safe_int(player.get("personId"))
-            if not pid:
-                continue
-            if player.get("starter") or player.get("starterPosition"):
-                starters.append(pid)
-        if len(starters) < 5:
-            pool: List[int] = []
-            for player in players:
-                pid = _safe_int(player.get("personId"))
-                if not pid:
-                    continue
-                status = str(player.get("status") or "").upper()
-                if status == "ACTIVE":
-                    pool.append(pid)
-            for pid in pool:
-                if pid not in starters:
-                    starters.append(pid)
-                    if len(starters) == 5:
-                        break
-        if len(starters) < 5:
-            for player in players:
-                pid = _safe_int(player.get("personId"))
-                if pid and pid not in starters:
-                    starters.append(pid)
-                    if len(starters) == 5:
-                        break
-        return starters if len(starters) == 5 else []
-
-    return {"home": side("homeTeam"), "away": side("awayTeam")}
+    return _extract_starters_from_box(box_json)
 
 
 def _seed_lineup(starters: List[int]) -> List[Optional[int]]:
@@ -124,6 +127,7 @@ def attach_lineups(
     df: pd.DataFrame,
     starters: Optional[Dict[str, List[int]]] = None,
     box_json: Optional[Dict[str, Any]] = None,
+    pbp_json: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     if df.empty:
         for column in _LINEUP_ID_COLUMNS + _LINEUP_NAME_COLUMNS:
@@ -131,11 +135,37 @@ def attach_lineups(
         return df
 
     df = df.copy()
-    home_id = _safe_int(df["home_team_id"].iloc[0])
-    away_id = _safe_int(df["away_team_id"].iloc[0])
 
     if starters is None and box_json is not None:
-        starters = extract_starters_from_box(box_json)
+        starters = _extract_starters_from_box(box_json)
+
+    if (
+        starters
+        and len(starters.get("home", [])) == 5
+        and len(starters.get("away", [])) == 5
+    ):
+        home_seed = [int(pid) for pid in starters["home"]]
+        away_seed = [int(pid) for pid in starters["away"]]
+
+        def _seed_group(group: pd.DataFrame) -> pd.DataFrame:
+            group = group.copy()
+            if group.empty:
+                return group
+            if "period" in group.columns:
+                period_one = group.index[group["period"] == 1]
+                first_idx = period_one[0] if len(period_one) else group.index[0]
+            else:
+                first_idx = group.index[0]
+            for i, pid in enumerate(home_seed, start=1):
+                group.loc[first_idx, f"home_player_{i}_id"] = int(pid)
+            for i, pid in enumerate(away_seed, start=1):
+                group.loc[first_idx, f"away_player_{i}_id"] = int(pid)
+            return group
+
+        df = df.groupby("game_id", group_keys=False).apply(_seed_group)
+
+    home_id = _safe_int(df["home_team_id"].iloc[0])
+    away_id = _safe_int(df["away_team_id"].iloc[0])
 
     home_starters = starters.get("home", []) if starters else []
     away_starters = starters.get("away", []) if starters else []
@@ -148,39 +178,6 @@ def attach_lineups(
 
     home_history: List[List[Optional[int]]] = []
     away_history: List[List[Optional[int]]] = []
-
-    name_map: Dict[int, str] = {}
-
-    for id_col, name_col in [
-        ("player1_id", "player1_name"),
-        ("player2_id", "player2_name"),
-        ("player3_id", "player3_name"),
-    ]:
-        if id_col not in df.columns or name_col not in df.columns:
-            continue
-        for pid, name in zip(df[id_col], df[name_col]):
-            try:
-                pid_int = int(pid)
-            except (TypeError, ValueError):
-                continue
-            if not name:
-                continue
-            name_map.setdefault(pid_int, str(name))
-
-    if box_json:
-        for team in ("homeTeam", "awayTeam"):
-            players = (
-                box_json.get("game", {})
-                .get(team, {})
-                .get("players", [])
-            )
-            for player in players:
-                pid = _safe_int(player.get("personId"))
-                if not pid:
-                    continue
-                display_name = _player_display_name(player)
-                if display_name:
-                    name_map.setdefault(pid, display_name)
 
     for _, row in df.iterrows():
         team_id = _safe_int(row.get("team_id"))
@@ -207,13 +204,30 @@ def attach_lineups(
         home_history.append(_copy_lineup(home_lineup))
         away_history.append(_copy_lineup(away_lineup))
 
-        for id_col, name_col in [
-            ("player1_id", "player1_name"),
-            ("player2_id", "player2_name"),
-            ("player3_id", "player3_name"),
-        ]:
-            pid = row.get(id_col)
-            name = row.get(name_col)
+    for idx in range(5):
+        df[f"home_player_{idx + 1}_id"] = [line[idx] for line in home_history]
+        df[f"away_player_{idx + 1}_id"] = [line[idx] for line in away_history]
+
+    id_cols = [
+        f"{team}_player_{slot}_id"
+        for team in ("home", "away")
+        for slot in range(1, 6)
+    ]
+    df[id_cols] = (
+        df.groupby("game_id", group_keys=False)[id_cols]
+        .ffill()
+        .bfill()
+    )
+
+    name_map: Dict[int, str] = {}
+    for id_col, name_col in [
+        ("player1_id", "player1_name"),
+        ("player2_id", "player2_name"),
+        ("player3_id", "player3_name"),
+    ]:
+        if id_col not in df.columns or name_col not in df.columns:
+            continue
+        for pid, name in zip(df[id_col], df[name_col]):
             try:
                 pid_int = int(pid)
             except (TypeError, ValueError):
@@ -222,30 +236,25 @@ def attach_lineups(
                 continue
             name_map.setdefault(pid_int, str(name))
 
-    for idx in range(5):
-        df[f"home_player_{idx+1}_id"] = [line[idx] for line in home_history]
-        df[f"away_player_{idx+1}_id"] = [line[idx] for line in away_history]
+    for pid, name in _name_map_from_box_and_pbp(box_json or {}, pbp_json).items():
+        name_map[pid] = name
 
-    def _name_for(pid: Optional[int]) -> str:
+    def _lookup_name(value: Any) -> str:
+        if pd.isna(value):
+            return ""
         try:
-            pid_int = int(pid)
+            pid_int = int(value)
         except (TypeError, ValueError):
+            return ""
+        if pid_int == 0:
             return ""
         return name_map.get(pid_int, "")
 
-    for idx in range(5):
-        df[f"home_player_{idx+1}"] = [
-            _name_for(line[idx]) for line in home_history
-        ]
-        df[f"away_player_{idx+1}"] = [
-            _name_for(line[idx]) for line in away_history
-        ]
-
-    fill_cols = _LINEUP_ID_COLUMNS + _LINEUP_NAME_COLUMNS
-    df[fill_cols] = (
-        df.groupby("game_id", group_keys=False)[fill_cols]
-        .ffill()
-        .bfill()
-    )
+    for team in ("home", "away"):
+        for slot in range(1, 6):
+            id_col = f"{team}_player_{slot}_id"
+            name_col = f"{team}_player_{slot}"
+            if id_col in df.columns:
+                df[name_col] = df[id_col].map(_lookup_name)
 
     return df
