@@ -46,3 +46,4 @@ def test_cdn_frame_works_with_nba_parser():
 
     assert not pbg.empty
     assert not tbg.empty
+    assert tbg["toc_string"].str.match(r"^\d+:\d{2}$").all()

@@ -317,7 +317,7 @@ def parse_v2_to_rows(v2_json: Dict, mapping_yaml_path: Optional[str] = None) -> 
             "home_team_abbrev": home_tri,
             "away_team_id": away_id,
             "away_team_abbrev": away_tri,
-            "game_date": row.get("game_date"),
+            "game_date": game_ts.strftime("%Y-%m-%d") if pd.notna(game_ts) else None,
             "season": season_val,
             "family": family,
             "subfamily": subfamily,

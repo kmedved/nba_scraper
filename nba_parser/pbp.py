@@ -1906,9 +1906,8 @@ class PbP:
         tbg["game_date"] = self.df["game_date"].unique()[0]
         tbg["season"] = self.df["season"].unique()[0]
         tbg["toc"] = self.df["seconds_elapsed"].max()
-        tbg[
-            "toc_string"
-        ] = f"{math.floor(self.df['seconds_elapsed'].max()/60)}:{self.df['seconds_elapsed'].max()%60}0"
+        max_secs = int(self.df["seconds_elapsed"].max())
+        tbg["toc_string"] = f"{max_secs // 60}:{max_secs % 60:02d}"
         tbg["is_home"] = np.where(
             tbg["team_id"] == self.df["home_team_id"].unique()[0], 1, 0
         )
