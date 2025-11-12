@@ -61,6 +61,14 @@ def test_cdn_parse_basic():
     assert shot_row["is_block"] == 1
 
 
+def test_cdn_game_date_normalized():
+    pbp = _load_json("cdn_playbyplay_0022400001.json")
+    box = _load_json("cdn_boxscore_0022400001.json")
+    df = cdn_parser.parse_actions_to_rows(pbp, box)
+    val = str(df["game_date"].iloc[0])
+    assert len(val) == 10
+
+
 def test_v2_parse_basic():
     v2 = _load_json("v2_pbp_0021700001.json")
     df = v2_parser.parse_v2_to_rows(v2)
@@ -80,6 +88,13 @@ def test_v2_parse_basic():
     made = df[df["eventmsgtype"] == 1].iloc[0]
     assert made["points_made"] == 2
     assert made["event_type_de"] == "shot"
+
+
+def test_v2_game_date_normalized():
+    v2 = _load_json("v2_pbp_0021700001.json")
+    df = v2_parser.parse_v2_to_rows(v2)
+    val = str(df["game_date"].iloc[0])
+    assert len(val) == 10
 
 
 def test_seconds_elapsed():

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.2
+
+* Normalised `game_date` from both CDN and v2 parsers to a consistent `YYYY-MM-DD` string.
+* Fixed `teambygamestats()` to produce properly zero-padded `toc_string` values.
+* Deferred RAPM imports so `nba_parser` can be used without scikit-learn and documented an optional `rapm` extra.
+* Added regression tests covering the normalised dates and `toc_string` format.
+
 ## 1.2.1
 
 * Added compatibility columns (`event_team`, `event_type_de`, player team IDs, turnover/steal/block flags, `ft_n`/`ft_m`, `season`) to both CDN and legacy v2 parsers for use with `nba_parser`.

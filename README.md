@@ -36,6 +36,7 @@ includes:
 * `scoremargin` – home score minus away score as a string (compatible with legacy consumers).
 * `ft_n` and `ft_m` – structured free-throw trip counters extracted from the
   feed and normalised for technical/single attempts.
+* `game_date` – normalised to a `YYYY-MM-DD` string for consistent downstream handling.
 * `season` – derived from the UTC tip-off date.
 * `home_player_1`…`home_player_5` / `away_player_1`…`away_player_5` – lineup
   names alongside the existing ID columns.
@@ -56,7 +57,9 @@ the variable is unset.
 Legacy consumers that still rely on ``homedescription`` / ``visitordescription``
 text can opt-in to synthesised “Free Throw N of M” strings by setting
 ``NBA_SCRAPER_SYNTH_FT_DESC=1``. The structured ``ft_n``/``ft_m`` counters
-remain available regardless of this flag.
+remain available regardless of this flag. Set the environment variable before
+importing ``nba_scraper.cdn_parser`` if you need the override to apply during
+module import.
 
 ## Using with `nba_parser`
 
@@ -88,6 +91,11 @@ by `nba_scraper` (including legacy v2 games) will work with `nba_parser.PbP`.
 To install this package just type this at the command line:
 
     pip install nba_scraper
+
+Advanced RAPM tooling depends on scikit-learn and is distributed as an optional
+extra:
+
+    pip install "nba_scraper[rapm]"
 
 # Usage
 

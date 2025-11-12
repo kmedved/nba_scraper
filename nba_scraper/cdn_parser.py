@@ -327,7 +327,7 @@ def parse_actions_to_rows(
             "away_team_abbrev": away_tri,
             "homedescription": "",
             "visitordescription": "",
-            "game_date": game_timestamp,
+            "game_date": game_timestamp.strftime("%Y-%m-%d") if pd.notna(game_timestamp) else None,
             "season": season_val if season_val is not None else 0,
             "family": family,
             "subfamily": subfamily,
