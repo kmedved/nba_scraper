@@ -139,7 +139,11 @@ class _SidecarCollector:
         self._pending_rows: Dict[Tuple[int, Optional[int]], List[Dict[str, Any]]] = {}
 
     def register(self, action: Dict[str, Any]) -> None:
-        key = (action.get("period"), action.get("shotActionNumber"))
+        shot_key = action.get("shotActionNumber")
+        # Only treat block/steal sidecars that explicitly reference a shot.
+        if shot_key is None:
+            return
+        key = (action.get("period"), shot_key)
         entry = self._by_shot.setdefault(key, {})
         if action.get("actionType") == "block":
             entry["block_id"] = action.get("personId")
@@ -152,7 +156,11 @@ class _SidecarCollector:
                 self._apply_entry(entry, row)
 
     def apply(self, action: Dict[str, Any], row: Dict[str, Any]) -> None:
-        key = (action.get("period"), action.get("shotActionNumber"))
+        shot_key = action.get("shotActionNumber")
+        if shot_key is None:
+            # No shotActionNumber means we cannot link to a sidecar entry.
+            return
+        key = (action.get("period"), shot_key)
         data = self._by_shot.get(key)
         if not data:
             self._pending_rows.setdefault(key, []).append(row)
@@ -409,22 +417,11 @@ def parse_actions_to_rows(
             "ft_m": ft_m_val,
         }
 
-        if family == "foul":
-            drawn_id = _int_or_zero(action.get("foulDrawnPersonId"))
-            if drawn_id:
-                row["player2_id"] = drawn_id
-                row["player2_name"] = (
-                    action.get("foulDrawnPlayerName")
-                    or row.get("player2_name")
-                    or ""
-                )
-                row["player2_team_id"] = opp_team_id
-
         if overrides:
             if family not in {"2pt", "3pt"} and "eventmsgtype" in overrides:
                 row["eventmsgtype"] = int(overrides["eventmsgtype"])
-            if "eventmsgactiontype" in overrides:
-                row["eventmsgactiontype"] = int(overrides["eventmsgactiontype"])
+                if "eventmsgactiontype" in overrides:
+                    row["eventmsgactiontype"] = int(overrides["eventmsgactiontype"])
             if overrides.get("subfamily"):
                 row["subfamily"] = str(overrides["subfamily"])
             row["event_type_de"] = _EVENT_TYPE_DE.get(row["eventmsgtype"], "")
@@ -452,8 +449,17 @@ def parse_actions_to_rows(
                 row["player2_id"] = steal_id
                 row["player2_team_id"] = opp_team_id
                 row["player2_name"] = (
-                    action.get("stealPlayerNameInitial")
-                    or action.get("stealPlayerName")
+                    action.get("stealPlayerName")
+                    or row.get("player2_name")
+                    or ""
+                )
+        if family == "foul":
+            drawn_id = _int_or_zero(action.get("foulDrawnPersonId"))
+            if drawn_id:
+                row["player2_id"] = drawn_id
+                row["player2_team_id"] = person_to_team.get(drawn_id, 0)
+                row["player2_name"] = (
+                    action.get("foulDrawnPlayerName")
                     or row.get("player2_name")
                     or ""
                 )
@@ -463,8 +469,7 @@ def parse_actions_to_rows(
                 row["player3_id"] = block_id
                 row["player3_team_id"] = opp_team_id
                 row["player3_name"] = (
-                    action.get("blockPlayerNameInitial")
-                    or action.get("blockPlayerName")
+                    action.get("blockPlayerName")
                     or row.get("player3_name")
                     or ""
                 )
@@ -532,7 +537,7 @@ def parse_actions_to_rows(
         return df
 
     df = df.sort_values(["period", "order_number", "action_number"], kind="mergesort")
-    df["event_length"] = df.groupby("period")["seconds_elapsed"].diff(-1).abs()
-    df["event_length"] = df["event_length"].fillna(0)
+    df["event_length"] = df.groupby("period")["seconds_elapsed"].diff()
+    df["event_length"] = df["event_length"].fillna(0).abs()
     df = infer_possession_after(df)
     return df.reset_index(drop=True)
