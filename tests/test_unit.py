@@ -1,3 +1,4 @@
+import importlib
 import json
 import sys
 from pathlib import Path
@@ -25,6 +26,7 @@ def test_cdn_parse_basic():
     df = lineup_builder.attach_lineups(df)
     assert not df.empty
     assert "home_player_1_id" in df.columns
+    assert {"eventnum", "season"}.issubset(df.columns)
     expected_columns = {
         "game_id",
         "period",
@@ -63,6 +65,7 @@ def test_v2_parse_basic():
     v2 = _load_json("v2_pbp_0021700001.json")
     df = v2_parser.parse_v2_to_rows(v2)
     assert not df.empty
+    assert {"eventnum", "season"}.issubset(df.columns)
     assert set(
         [
             "family",
@@ -106,3 +109,23 @@ def test_sidecar_merge():
     action_numbers = set(df["action_number"].tolist())
     assert 5 not in action_numbers  # steal sidecar merged
     assert 8 not in action_numbers  # block sidecar merged
+
+
+def test_cdn_synth_ft_description(monkeypatch):
+    monkeypatch.setenv("NBA_SCRAPER_SYNTH_FT_DESC", "1")
+    # Reload module to pick up environment variable change.
+    module = importlib.reload(cdn_parser)
+    globals()["cdn_parser"] = module
+    pbp = _load_json("cdn_playbyplay_0022400001.json")
+    box = _load_json("cdn_boxscore_0022400001.json")
+    df = module.parse_actions_to_rows(pbp, box)
+    ft_rows = df[df["family"] == "freethrow"]
+    assert not ft_rows.empty
+    has_desc = ft_rows[
+        (ft_rows["homedescription"] != "") | (ft_rows["visitordescription"] != "")
+    ]
+    assert not has_desc.empty
+    # Reset module state for other tests
+    monkeypatch.setenv("NBA_SCRAPER_SYNTH_FT_DESC", "0")
+    module = importlib.reload(module)
+    globals()["cdn_parser"] = module

@@ -41,6 +41,21 @@ includes:
 These compatibility columns are present for both CDN and legacy v2 sources so
 that the resulting dataframe can be dropped directly into analytics pipelines.
 
+## YAML mapping
+
+Set the ``NBA_SCRAPER_MAP`` environment variable to point at a curated YAML
+file (derived from ``mapping_template.yml`` in the catalog) to refine
+``eventmsgactiontype`` and ``subfamily`` classifications for turnovers, fouls
+and violations. Parsers will load the mapping at runtime, but still succeed if
+the variable is unset.
+
+## Optional free-throw description synthesis
+
+Legacy consumers that still rely on ``homedescription`` / ``visitordescription``
+text can opt-in to synthesised “Free Throw N of M” strings by setting
+``NBA_SCRAPER_SYNTH_FT_DESC=1``. The structured ``ft_n``/``ft_m`` counters
+remain available regardless of this flag.
+
 ## Using with `nba_parser`
 
 The canonical dataframe can be passed straight into [`nba_parser`](https://pypi.org/project/nba-parser/)
