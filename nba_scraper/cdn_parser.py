@@ -321,9 +321,7 @@ def parse_actions_to_rows(
         ft_m_val: Optional[int] = None
         if family == "freethrow":
             ft_n_val, ft_m_val = ft_n_m(action.get("subType") or "")
-            if ft_n_val is None or ft_m_val is None:
-                ft_n_val = 1
-                ft_m_val = 1
+            # leave as None when unknown; possession inference must not guess
 
         row: Dict[str, Any] = {
             "game_id": game_id,
@@ -410,16 +408,33 @@ def parse_actions_to_rows(
             if assist_id:
                 row["player2_id"] = assist_id
                 row["player2_team_id"] = team_id_int
+                # Name fallback from JSON
+                row["player2_name"] = (
+                    action.get("assistPlayerNameInitial")
+                    or action.get("assistPlayerName")
+                    or row.get("player2_name")
+                    or ""
+                )
         if family == "turnover":
             steal_id = row.get("steal_id")
             if steal_id:
                 row["player2_id"] = steal_id
                 row["player2_team_id"] = opp_team_id
+                row["player2_name"] = (
+                    action.get("stealPlayerName")
+                    or row.get("player2_name")
+                    or ""
+                )
         if family in {"2pt", "3pt"} and shot_made == 0:
             block_id = row.get("block_id")
             if block_id:
                 row["player3_id"] = block_id
                 row["player3_team_id"] = opp_team_id
+                row["player3_name"] = (
+                    action.get("blockPlayerName")
+                    or row.get("player3_name")
+                    or ""
+                )
 
         row["player1_team_id"] = _int_or_zero(row.get("player1_team_id"))
         row["player2_id"] = _int_or_zero(row.get("player2_id"))
@@ -487,8 +502,4 @@ def parse_actions_to_rows(
     df["event_length"] = df.groupby("period")["seconds_elapsed"].diff(-1).abs()
     df["event_length"] = df["event_length"].fillna(0)
     df = infer_possession_after(df)
-    df["possession_after"] = df["possession_after"].replace({"": pd.NA})
-    df["possession_after"] = (
-        df.groupby(["game_id", "period"])["possession_after"].ffill()
-    )
     return df.reset_index(drop=True)
