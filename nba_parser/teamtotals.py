@@ -1,6 +1,5 @@
 import pandas as pd
 import numpy as np
-from sklearn.linear_model import RidgeCV
 
 
 class TeamTotals:
@@ -143,6 +142,9 @@ class TeamTotals:
         function will return RAPM regression results based on the the teambygamestats()
         results passed to the TeamTotals object when instantiated
         """
+
+        # Lazy import to avoid requiring scikit-learn for users who don't use RAPM
+        from sklearn.linear_model import RidgeCV
 
         def lambda_to_alpha(lambda_value, samples):
             return (lambda_value * samples) / 2.0
