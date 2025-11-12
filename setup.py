@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 setup(
     name="nba_scraper",
     packages=find_packages(),
-    version="1.2.0",
+    version="1.2.1",
     license="GNU General Public License v3.0",
     description="Unified NBA play-by-play scraper for CDN and legacy sources",
     long_description=long_description,
@@ -13,7 +13,7 @@ setup(
     author="Matthew Barlowe",
     author_email="matt@barloweanalytics.com",
     url="https://github.com/mcbarlowe/nba_scraper",
-    download_url="https://github.com/mcbarlowe/nba_scraper/archive/v1.2.0.tar.gz",
+    download_url="https://github.com/mcbarlowe/nba_scraper/archive/v1.2.1.tar.gz",
     keywords=["basketball", "NBA", "scraper"],
     install_requires=["requests", "pandas", "numpy", "pyyaml"],
     classifiers=[

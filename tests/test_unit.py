@@ -32,24 +32,51 @@ def test_cdn_parse_basic():
         "seconds_elapsed",
         "eventmsgtype",
         "eventmsgactiontype",
+        "event_type_de",
+        "event_team",
+        "player1_team_id",
+        "player2_team_id",
+        "player3_team_id",
         "points_made",
         "steal_id",
         "block_id",
+        "is_turnover",
+        "is_steal",
+        "is_block",
+        "ft_n",
+        "ft_m",
+        "season",
+        "home_player_1",
+        "away_player_1",
     }
     assert expected_columns.issubset(df.columns)
     turnover_row = df[df["family"] == "turnover"].iloc[0]
     assert turnover_row["steal_id"] == 201939
+    assert turnover_row["is_turnover"] == 1
+    assert turnover_row["is_steal"] == 1
     shot_row = df[df["family"] == "2pt"].iloc[0]
     assert shot_row["block_id"] == 201143
+    assert shot_row["is_block"] == 1
 
 
 def test_v2_parse_basic():
     v2 = _load_json("v2_pbp_0021700001.json")
     df = v2_parser.parse_v2_to_rows(v2)
     assert not df.empty
-    assert set(["family", "eventmsgtype", "points_made"]).issubset(df.columns)
+    assert set(
+        [
+            "family",
+            "eventmsgtype",
+            "points_made",
+            "event_type_de",
+            "event_team",
+            "player1_team_id",
+            "season",
+        ]
+    ).issubset(df.columns)
     made = df[df["eventmsgtype"] == 1].iloc[0]
     assert made["points_made"] == 2
+    assert made["event_type_de"] == "shot"
 
 
 def test_seconds_elapsed():
