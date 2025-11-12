@@ -299,6 +299,12 @@ def parse_actions_to_rows(
         subfamily_raw = action.get("subType") or descriptor_core
         subfamily_norm = canon_str(subfamily_raw)
         subfamily = subfamily_norm or subfamily_raw
+        flags = set(style_flags or [])
+        if descriptor_core:
+            d_norm = canon_str(descriptor_core)
+            if d_norm and d_norm != canon_str(subfamily):
+                flags.add(d_norm)
+        style_flags = sorted(flags)
         shot_result = action.get("shotResult")
         eventmsgtype = eventmsgtype_for(family, shot_result, subfamily)
         eventmsgactiontype = actiontype_code_for(family, subfamily)
@@ -403,6 +409,17 @@ def parse_actions_to_rows(
             "ft_m": ft_m_val,
         }
 
+        if family == "foul":
+            drawn_id = _int_or_zero(action.get("foulDrawnPersonId"))
+            if drawn_id:
+                row["player2_id"] = drawn_id
+                row["player2_name"] = (
+                    action.get("foulDrawnPlayerName")
+                    or row.get("player2_name")
+                    or ""
+                )
+                row["player2_team_id"] = opp_team_id
+
         if overrides:
             if family not in {"2pt", "3pt"} and "eventmsgtype" in overrides:
                 row["eventmsgtype"] = int(overrides["eventmsgtype"])
@@ -423,31 +440,33 @@ def parse_actions_to_rows(
             if assist_id:
                 row["player2_id"] = assist_id
                 row["player2_team_id"] = team_id_int
-                # Name fallback from JSON
-                row["player2_name"] = _resolve_player_name(
-                    action.get("assistPlayerNameInitial"),
-                    action.get("assistPlayerName"),
-                    row.get("player2_name"),
+                row["player2_name"] = (
+                    action.get("assistPlayerNameInitial")
+                    or action.get("assistPlayerName")
+                    or row.get("player2_name")
+                    or ""
                 )
         if family == "turnover":
             steal_id = row.get("steal_id")
             if steal_id:
                 row["player2_id"] = steal_id
                 row["player2_team_id"] = opp_team_id
-                row["player2_name"] = _resolve_player_name(
-                    action.get("stealPlayerNameInitial"),
-                    action.get("stealPlayerName"),
-                    row.get("player2_name"),
+                row["player2_name"] = (
+                    action.get("stealPlayerNameInitial")
+                    or action.get("stealPlayerName")
+                    or row.get("player2_name")
+                    or ""
                 )
         if family in {"2pt", "3pt"} and shot_made == 0:
             block_id = row.get("block_id")
             if block_id:
                 row["player3_id"] = block_id
                 row["player3_team_id"] = opp_team_id
-                row["player3_name"] = _resolve_player_name(
-                    action.get("blockPlayerNameInitial"),
-                    action.get("blockPlayerName"),
-                    row.get("player3_name"),
+                row["player3_name"] = (
+                    action.get("blockPlayerNameInitial")
+                    or action.get("blockPlayerName")
+                    or row.get("player3_name")
+                    or ""
                 )
 
         row["player1_team_id"] = _int_or_zero(row.get("player1_team_id"))
