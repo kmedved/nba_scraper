@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 
@@ -22,7 +23,9 @@ def test_cdn_frame_works_with_nba_parser():
     box = FIXTURES / "cdn_boxscore_0022400001.json"
 
     df = io_sources.parse_any((pbp, box), io_sources.SourceKind.CDN_LOCAL)
-    df = lineup_builder.attach_lineups(df)
+    with box.open("r", encoding="utf-8") as fh:
+        box_json = json.load(fh)
+    df = lineup_builder.attach_lineups(df, box_json=box_json)
 
     required = {
         "event_type_de",
