@@ -19,6 +19,53 @@ and legacy v2 JSON archives. No matter the source, results are normalised to a
 canonical schema that includes structured shot metadata, team context and on-court
 lineups computed from the play-by-play itself.
 
+## Canonical dataframe columns
+
+Each parsed play-by-play row exposes a common set of columns that are designed to
+interoperate with downstream tools such as `nba_parser`. In addition to the core
+fields (`eventmsgtype`, `pctimestring`, `player1_id`, etc.) the dataframe now
+includes:
+
+* `event_team` and `event_type_de` – a consistent team abbreviation and event
+  label for every action.
+* `player1_team_id`, `player2_team_id`, `player3_team_id` – acting and secondary
+  team identifiers populated for assists, steals and blocks.
+* `is_turnover`, `is_steal`, `is_block` – boolean flags used by possession
+  aggregators.
+* `ft_n` and `ft_m` – structured free-throw trip counters extracted from the
+  feed and normalised for technical/single attempts.
+* `season` – derived from the UTC tip-off date.
+* `home_player_1`…`home_player_5` / `away_player_1`…`away_player_5` – lineup
+  names alongside the existing ID columns.
+
+These compatibility columns are present for both CDN and legacy v2 sources so
+that the resulting dataframe can be dropped directly into analytics pipelines.
+
+## Using with `nba_parser`
+
+The canonical dataframe can be passed straight into [`nba_parser`](https://pypi.org/project/nba-parser/)
+for advanced possession and box score calculations:
+
+```python
+from pathlib import Path
+
+from nba_scraper import io_sources, lineup_builder
+from nba_parser import PbP
+
+pbp_path = Path("cdn_playbyplay_0022400001.json")
+box_path = Path("cdn_boxscore_0022400001.json")
+
+df = io_sources.parse_any((pbp_path, box_path), io_sources.SourceKind.CDN_LOCAL)
+df = lineup_builder.attach_lineups(df)
+
+pbp = PbP(df)
+player_totals = pbp.playerbygamestats()
+team_totals = pbp.teambygamestats()
+```
+
+The example above uses local CDN fixtures, but any canonical dataframe returned
+by `nba_scraper` (including legacy v2 games) will work with `nba_parser.PbP`.
+
 # Installation
 
 To install this package just type this at the command line:

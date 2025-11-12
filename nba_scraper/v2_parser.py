@@ -1,12 +1,38 @@
 """Parser that converts legacy stats.nba.com v2 JSON into canonical rows."""
 from __future__ import annotations
 
+import re
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
 from .mapping.descriptor_norm import normalize_descriptor
-from .helper_functions import seconds_elapsed
+from .helper_functions import get_season, seconds_elapsed
+
+_EVENT_TYPE_DE = {
+    1: "shot",
+    2: "missed_shot",
+    3: "free-throw",
+    4: "rebound",
+    5: "turnover",
+    6: "foul",
+    7: "violation",
+    8: "substitution",
+    9: "timeout",
+    10: "jump-ball",
+    12: "period",
+    13: "period",
+    15: "game",
+}
+
+
+def _int_or_zero(value: object) -> int:
+    try:
+        if value in (None, ""):
+            return 0
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 _CANONICAL_COLUMNS = [
     "game_id",
@@ -19,21 +45,27 @@ _CANONICAL_COLUMNS = [
     "time_actual",
     "team_id",
     "team_tricode",
+    "event_team",
     "player1_id",
     "player1_name",
+    "player1_team_id",
     "player2_id",
     "player2_name",
+    "player2_team_id",
     "player3_id",
     "player3_name",
+    "player3_team_id",
     "home_team_id",
     "home_team_abbrev",
     "away_team_id",
     "away_team_abbrev",
     "game_date",
+    "season",
     "family",
     "subfamily",
     "eventmsgtype",
     "eventmsgactiontype",
+    "event_type_de",
     "is_three",
     "shot_made",
     "points_made",
@@ -55,6 +87,11 @@ _CANONICAL_COLUMNS = [
     "possession_after",
     "score_home",
     "score_away",
+    "is_turnover",
+    "is_steal",
+    "is_block",
+    "ft_n",
+    "ft_m",
 ]
 
 
@@ -178,6 +215,22 @@ def _team_tricode_for_row(row: pd.Series) -> Optional[str]:
     return None
 
 
+_FT_REGEX = re.compile(r"Free Throw\s+(\d+)\s+of\s+(\d+)", re.IGNORECASE)
+
+
+def _ft_trip_from_text(row: pd.Series) -> Tuple[Optional[int], Optional[int]]:
+    for key in ("homedescription", "visitordescription"):
+        text = row.get(key)
+        if isinstance(text, str):
+            match = _FT_REGEX.search(text)
+            if match:
+                try:
+                    return int(match.group(1)), int(match.group(2))
+                except ValueError:
+                    return None, None
+    return None, None
+
+
 def parse_v2_to_rows(v2_json: Dict, mapping_yaml_path: Optional[str] = None) -> pd.DataFrame:
     df_raw = _load_dataframe(v2_json)
     if df_raw.empty:
@@ -193,6 +246,24 @@ def parse_v2_to_rows(v2_json: Dict, mapping_yaml_path: Optional[str] = None) -> 
         shot_made = _shot_made(row)
         points = _points_made(family, shot_made)
         subfamily = _subfamily(row, family)
+        team_id_val = _team_id_for_row(row)
+        team_tricode = _team_tricode_for_row(row)
+        eventmsgtype_val = _int_or_zero(row.get("eventmsgtype"))
+        steal_id = _int_or_zero(row.get("steal_person_id"))
+        block_id = _int_or_zero(row.get("block_person_id"))
+        player1_team_id = _int_or_zero(row.get("player1_team_id"))
+        player2_team_id = _int_or_zero(row.get("player2_team_id"))
+        player3_team_id = _int_or_zero(row.get("player3_team_id"))
+        if not player1_team_id and team_id_val is not None:
+            player1_team_id = _int_or_zero(team_id_val)
+        ft_n_val, ft_m_val = _ft_trip_from_text(row)
+        game_ts = pd.to_datetime(row.get("game_date"), utc=True, errors="coerce")
+        season_val = 0
+        if game_ts is not None and not pd.isna(game_ts):
+            ts = game_ts
+            if ts.tzinfo is not None:
+                ts = ts.tz_convert(None)
+            season_val = get_season(ts.to_pydatetime())
         rows.append(
             {
                 "game_id": row.get("game_id"),
@@ -203,23 +274,29 @@ def parse_v2_to_rows(v2_json: Dict, mapping_yaml_path: Optional[str] = None) -> 
                 "action_number": row.get("eventnum"),
                 "order_number": row.get("eventnum"),
                 "time_actual": row.get("game_clock"),
-                "team_id": _team_id_for_row(row),
-                "team_tricode": _team_tricode_for_row(row),
-                "player1_id": row.get("player1_id"),
+                "team_id": team_id_val,
+                "team_tricode": team_tricode,
+                "event_team": team_tricode or "",
+                "player1_id": _int_or_zero(row.get("player1_id")),
                 "player1_name": row.get("player1_name"),
-                "player2_id": row.get("player2_id"),
+                "player1_team_id": player1_team_id,
+                "player2_id": _int_or_zero(row.get("player2_id")),
                 "player2_name": row.get("player2_name"),
-                "player3_id": row.get("player3_id"),
+                "player2_team_id": player2_team_id,
+                "player3_id": _int_or_zero(row.get("player3_id")),
                 "player3_name": row.get("player3_name"),
+                "player3_team_id": player3_team_id,
                 "home_team_id": home_id,
                 "home_team_abbrev": home_tri,
                 "away_team_id": away_id,
                 "away_team_abbrev": away_tri,
                 "game_date": row.get("game_date"),
+                "season": season_val,
                 "family": family,
                 "subfamily": subfamily,
-                "eventmsgtype": row.get("eventmsgtype"),
+                "eventmsgtype": eventmsgtype_val,
                 "eventmsgactiontype": row.get("eventmsgactiontype"),
+                "event_type_de": _EVENT_TYPE_DE.get(eventmsgtype_val, ""),
                 "is_three": 1 if family == "3pt" else 0,
                 "shot_made": shot_made,
                 "points_made": points,
@@ -230,8 +307,8 @@ def parse_v2_to_rows(v2_json: Dict, mapping_yaml_path: Optional[str] = None) -> 
                 "area": None,
                 "area_detail": None,
                 "assist_id": row.get("assist_person_id"),
-                "block_id": row.get("block_person_id"),
-                "steal_id": row.get("steal_person_id"),
+                "block_id": block_id,
+                "steal_id": steal_id,
                 "style_flags": [],
                 "qualifiers": [],
                 "is_o_rebound": 1 if family == "rebound" and "OFF" in str(row.get("homedescription", "")).upper() else 0,
@@ -241,6 +318,11 @@ def parse_v2_to_rows(v2_json: Dict, mapping_yaml_path: Optional[str] = None) -> 
                 "possession_after": None,
                 "score_home": row.get("score_home"),
                 "score_away": row.get("score_away"),
+                "is_turnover": 1 if eventmsgtype_val == 5 else 0,
+                "is_steal": 1 if eventmsgtype_val == 5 and steal_id else 0,
+                "is_block": 1 if eventmsgtype_val in (1, 2) and shot_made == 0 and block_id else 0,
+                "ft_n": ft_n_val,
+                "ft_m": ft_m_val,
             }
         )
 
