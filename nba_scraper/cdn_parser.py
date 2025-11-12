@@ -243,6 +243,21 @@ def parse_actions_to_rows(
     actions = pbp_json.get("game", {}).get("actions", [])
     game_id = pbp_json.get("game", {}).get("gameId")
     home_id, home_tri, away_id, away_tri, game_date = _team_meta(box_json)
+    # Build personId -> team mappings for fallback team attribution.
+    person_to_team: Dict[int, int] = {}
+    person_to_tri: Dict[int, str] = {}
+    game_meta = (box_json or {}).get("game", {})
+    for side in ("homeTeam", "awayTeam"):
+        team_blob = game_meta.get(side) or {}
+        team_id_val = _int_or_zero(team_blob.get("teamId"))
+        team_tri_val = team_blob.get("teamTricode") or ""
+        for player in team_blob.get("players", []) or []:
+            pid = _int_or_zero(player.get("personId"))
+            if not pid:
+                continue
+            person_to_team[pid] = team_id_val
+            if team_tri_val:
+                person_to_tri[pid] = team_tri_val
     game_timestamp = pd.to_datetime(game_date, utc=True, errors="coerce")
     season_val: Optional[int] = None
     if game_timestamp is not None and not pd.isna(game_timestamp):
@@ -279,7 +294,17 @@ def parse_actions_to_rows(
 
         team_id_raw = action.get("teamId")
         team_id_int = _int_or_zero(team_id_raw)
+        primary_player_id = _int_or_zero(action.get("personId"))
+        if not team_id_int and primary_player_id:
+            team_id_int = person_to_team.get(primary_player_id, 0)
         event_team = action.get("teamTricode") or ""
+        if not event_team:
+            if team_id_int == _int_or_zero(home_id):
+                event_team = home_tri or person_to_tri.get(primary_player_id, "")
+            elif team_id_int == _int_or_zero(away_id):
+                event_team = away_tri or person_to_tri.get(primary_player_id, "")
+            elif primary_player_id:
+                event_team = person_to_tri.get(primary_player_id, "")
         opp_team_id = _opponent_team_id(team_id_int, home_id, away_id)
 
         qualifiers_list = _qualifiers_list(action)
@@ -310,12 +335,13 @@ def parse_actions_to_rows(
             "order_number": action.get("orderNumber"),
             "eventnum": action.get("actionNumber"),
             "time_actual": action.get("timeActual"),
-            "team_id": action.get("teamId"),
-            "team_tricode": action.get("teamTricode"),
+            "team_id": team_id_int,
+            "team_tricode": event_team,
             "event_team": event_team,
             "player1_id": action.get("personId"),
             "player1_name": action.get("playerName"),
-            "player1_team_id": team_id_int,
+            "player1_team_id": team_id_int
+            or person_to_team.get(primary_player_id, 0),
             "player2_id": action.get("secondaryPersonId"),
             "player2_name": action.get("secondaryPlayerName"),
             "player2_team_id": 0,
@@ -400,6 +426,12 @@ def parse_actions_to_rows(
         row["player3_id"] = _int_or_zero(row.get("player3_id"))
         row["player2_team_id"] = _int_or_zero(row.get("player2_team_id"))
         row["player3_team_id"] = _int_or_zero(row.get("player3_team_id"))
+        if row["player1_team_id"] == 0 and row["player1_id"]:
+            row["player1_team_id"] = person_to_team.get(row["player1_id"], 0)
+        if row["player2_team_id"] == 0 and row["player2_id"]:
+            row["player2_team_id"] = person_to_team.get(row["player2_id"], 0)
+        if row["player3_team_id"] == 0 and row["player3_id"]:
+            row["player3_team_id"] = person_to_team.get(row["player3_id"], 0)
         eventmsgtype_final = _int_or_zero(row.get("eventmsgtype"))
         row["event_type_de"] = _EVENT_TYPE_DE.get(eventmsgtype_final, "")
         row["is_turnover"] = 1 if eventmsgtype_final == 5 else 0
@@ -455,4 +487,8 @@ def parse_actions_to_rows(
     df["event_length"] = df.groupby("period")["seconds_elapsed"].diff(-1).abs()
     df["event_length"] = df["event_length"].fillna(0)
     df = infer_possession_after(df)
+    df["possession_after"] = df["possession_after"].replace({"": pd.NA})
+    df["possession_after"] = (
+        df.groupby(["game_id", "period"])["possession_after"].ffill()
+    )
     return df.reset_index(drop=True)

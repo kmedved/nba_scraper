@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 
 PBP_URL = "https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_{gid}.json"
 BOX_URL = "https://cdn.nba.com/static/json/liveData/boxscore/boxscore_{gid}.json"
+SHOTCHART_URL = (
+    "https://cdn.nba.com/static/json/liveData/shotchart/shotchart_{gid}.json"
+)
 SCH_URL = "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2.json"
 
 
@@ -55,6 +58,11 @@ def fetch_pbp(gid: str) -> Dict[str, Any]:
 def fetch_box(gid: str) -> Dict[str, Any]:
     """Fetch box score JSON for the given game id."""
     return _fetch_json(BOX_URL.format(gid=gid))
+
+
+def fetch_shotchart(gid: str) -> Dict[str, Any]:
+    """Fetch shot chart JSON for the given game id."""
+    return _fetch_json(SHOTCHART_URL.format(gid=gid))
 
 
 def fetch_schedule() -> Dict[str, Any]:

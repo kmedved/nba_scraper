@@ -10,14 +10,36 @@ def _name_map_from_box_and_pbp(
     box_json: dict, pbp_json: Optional[dict] = None
 ) -> Dict[int, str]:
     m: Dict[int, str] = {}
-    players = (box_json or {}).get("game", {}).get("players", [])
-    for player in players:
+    game_blob = (box_json or {}).get("game", {})
+
+    def _iter_players() -> List[dict]:
+        collected: List[dict] = []
+        base_players = game_blob.get("players") or []
+        if isinstance(base_players, list):
+            collected.extend(base_players)
+        for side in ("homeTeam", "awayTeam"):
+            side_blob = game_blob.get(side) or {}
+            team_players = side_blob.get("players") or []
+            if isinstance(team_players, list):
+                collected.extend(team_players)
+        return collected
+
+    for player in _iter_players():
         pid = player.get("personId")
-        name = (
-            player.get("name")
-            or player.get("firstNameLastName")
-            or player.get("familyName")
-        )
+        name = player.get("name") or player.get("firstNameLastName")
+        if not name:
+            first = (
+                player.get("firstName")
+                or player.get("first_name")
+                or player.get("first")
+            )
+            last = (
+                player.get("familyName")
+                or player.get("lastName")
+                or player.get("last_name")
+            )
+            parts = [part for part in (first, last) if part]
+            name = " ".join(parts)
         if pid and name:
             m[int(pid)] = str(name)
     if pbp_json:
@@ -179,14 +201,21 @@ def attach_lineups(
     home_history: List[List[Optional[int]]] = []
     away_history: List[List[Optional[int]]] = []
 
+    def _resolve_team_from_row(row: pd.Series) -> Optional[int]:
+        for key in ("team_id", "player1_team_id", "player2_team_id", "player3_team_id"):
+            value = _safe_int(row.get(key))
+            if value:
+                return value
+        return None
+
     for _, row in df.iterrows():
-        team_id = _safe_int(row.get("team_id"))
         player_id = _safe_int(row.get("player1_id"))
-        if team_id and home_id and team_id == home_id:
+        event_team_id = _resolve_team_from_row(row)
+        if event_team_id and home_id and event_team_id == home_id:
             if player_id and player_id not in home_candidates:
                 home_candidates.append(player_id)
                 _update_with_player(home_lineup, player_id)
-        elif team_id and away_id and team_id == away_id:
+        elif event_team_id and away_id and event_team_id == away_id:
             if player_id and player_id not in away_candidates:
                 away_candidates.append(player_id)
                 _update_with_player(away_lineup, player_id)
@@ -194,12 +223,31 @@ def attach_lineups(
         if row.get("family") == "substitution":
             sub_out = _safe_int(row.get("player1_id"))
             sub_in = _safe_int(row.get("player2_id"))
-            target = home_lineup if team_id and home_id and team_id == home_id else away_lineup
-            if sub_out in target:
-                idx = target.index(sub_out)
-                target[idx] = sub_in or target[idx]
-            elif sub_in and sub_in not in target:
-                _update_with_player(target, sub_in)
+            substitution_team = event_team_id
+            if not substitution_team:
+                if sub_out and sub_out in home_lineup:
+                    substitution_team = home_id
+                elif sub_out and sub_out in away_lineup:
+                    substitution_team = away_id
+            target: Optional[List[Optional[int]]] = None
+            if substitution_team and home_id and substitution_team == home_id:
+                target = home_lineup
+            elif substitution_team and away_id and substitution_team == away_id:
+                target = away_lineup
+            elif sub_out and sub_out in home_lineup:
+                target = home_lineup
+            elif sub_out and sub_out in away_lineup:
+                target = away_lineup
+            if target is not None:
+                if target is home_lineup and sub_in and sub_in not in home_candidates:
+                    home_candidates.append(sub_in)
+                if target is away_lineup and sub_in and sub_in not in away_candidates:
+                    away_candidates.append(sub_in)
+                if sub_out in target:
+                    idx = target.index(sub_out)
+                    target[idx] = sub_in or target[idx]
+                elif sub_in and sub_in not in target:
+                    _update_with_player(target, sub_in)
 
         home_history.append(_copy_lineup(home_lineup))
         away_history.append(_copy_lineup(away_lineup))
@@ -218,6 +266,7 @@ def attach_lineups(
         .ffill()
         .bfill()
     )
+    df[id_cols] = df[id_cols].fillna(0).astype("Int64")
 
     name_map: Dict[int, str] = {}
     for id_col, name_col in [
