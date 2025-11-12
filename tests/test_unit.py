@@ -142,6 +142,21 @@ def test_sidecar_merge():
     assert 8 not in action_numbers  # block sidecar merged
 
 
+def test_cdn_parser_populates_secondary_names_from_json():
+    pbp = _load_json("cdn_playbyplay_0022400001.json")
+    box = _load_json("cdn_boxscore_0022400001.json")
+    df = cdn_parser.parse_actions_to_rows(pbp, box)
+
+    assist_row = df[(df["assist_id"] != 0) & (df["shot_made"] == 1)].iloc[0]
+    assert assist_row["player2_name"] == "Stephen Curry"
+
+    steal_row = df[df["steal_id"] != 0].iloc[0]
+    assert steal_row["player2_name"] == "Stephen Curry"
+
+    block_row = df[df["block_id"] != 0].iloc[0]
+    assert block_row["player3_name"] == "Paul Millsap"
+
+
 def test_cdn_synth_ft_description(monkeypatch):
     monkeypatch.setenv("NBA_SCRAPER_SYNTH_FT_DESC", "1")
     # Reload module to pick up environment variable change.
@@ -211,6 +226,54 @@ def test_shots_have_xy_or_are_synthesized():
 
     synth = shots & df["style_flags"].apply(_has_flag)
     assert (xy_present | synth)[shots].all()
+
+
+def test_lineup_builder_substitution_uses_player1_team_id_when_team_missing():
+    home_id = 1610612737
+    away_id = 1610612744
+    df = pd.DataFrame(
+        [
+            {
+                "game_id": "test-game",
+                "period": 1,
+                "family": "rebound",
+                "team_id": home_id,
+                "player1_id": 2001,
+                "player1_team_id": home_id,
+                "player2_id": 0,
+                "player3_id": 0,
+                "player2_team_id": 0,
+                "player3_team_id": 0,
+                "player1_name": "",
+                "player2_name": "",
+                "player3_name": "",
+                "home_team_id": home_id,
+                "away_team_id": away_id,
+            },
+            {
+                "game_id": "test-game",
+                "period": 1,
+                "family": "substitution",
+                "team_id": 0,
+                "player1_id": 2001,
+                "player2_id": 2002,
+                "player1_team_id": home_id,
+                "player2_team_id": 0,
+                "player3_id": 0,
+                "player3_team_id": 0,
+                "player1_name": "",
+                "player2_name": "",
+                "player3_name": "",
+                "home_team_id": home_id,
+                "away_team_id": away_id,
+            },
+        ]
+    )
+
+    result = lineup_builder.attach_lineups(df)
+
+    assert result.loc[0, "home_player_1_id"] == 2001
+    assert result.loc[1, "home_player_1_id"] == 2002
 
 
 def test_possession_after_filled_between_anchors():

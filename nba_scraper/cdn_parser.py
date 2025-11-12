@@ -43,6 +43,21 @@ def _int_or_zero(value: Any) -> int:
     except (TypeError, ValueError):
         return 0
 
+
+def _resolve_player_name(*values: Any) -> str:
+    """Return the first non-empty string from the provided values."""
+
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str):
+            candidate = value.strip()
+        else:
+            candidate = str(value)
+        if candidate:
+            return candidate
+    return ""
+
 _CANONICAL_COLUMNS = [
     "game_id",
     "period",
@@ -409,31 +424,30 @@ def parse_actions_to_rows(
                 row["player2_id"] = assist_id
                 row["player2_team_id"] = team_id_int
                 # Name fallback from JSON
-                row["player2_name"] = (
-                    action.get("assistPlayerNameInitial")
-                    or action.get("assistPlayerName")
-                    or row.get("player2_name")
-                    or ""
+                row["player2_name"] = _resolve_player_name(
+                    action.get("assistPlayerNameInitial"),
+                    action.get("assistPlayerName"),
+                    row.get("player2_name"),
                 )
         if family == "turnover":
             steal_id = row.get("steal_id")
             if steal_id:
                 row["player2_id"] = steal_id
                 row["player2_team_id"] = opp_team_id
-                row["player2_name"] = (
-                    action.get("stealPlayerName")
-                    or row.get("player2_name")
-                    or ""
+                row["player2_name"] = _resolve_player_name(
+                    action.get("stealPlayerNameInitial"),
+                    action.get("stealPlayerName"),
+                    row.get("player2_name"),
                 )
         if family in {"2pt", "3pt"} and shot_made == 0:
             block_id = row.get("block_id")
             if block_id:
                 row["player3_id"] = block_id
                 row["player3_team_id"] = opp_team_id
-                row["player3_name"] = (
-                    action.get("blockPlayerName")
-                    or row.get("player3_name")
-                    or ""
+                row["player3_name"] = _resolve_player_name(
+                    action.get("blockPlayerNameInitial"),
+                    action.get("blockPlayerName"),
+                    row.get("player3_name"),
                 )
 
         row["player1_team_id"] = _int_or_zero(row.get("player1_team_id"))
