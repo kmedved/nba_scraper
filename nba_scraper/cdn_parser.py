@@ -1,17 +1,21 @@
 """Parser that converts CDN liveData play-by-play feeds into canonical rows."""
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
-from .mapping.descriptor_norm import normalize_descriptor
+from .mapping.descriptor_norm import canon_str, normalize_descriptor
 from .mapping.event_codebook import (
     actiontype_code_for,
     eventmsgtype_for,
     ft_n_m,
 )
 from .helper_functions import get_season, iso_clock_to_pctimestring, seconds_elapsed
+from .mapping.loader import load_mapping
+
+_SYNTH_FT_DESC = os.getenv("NBA_SCRAPER_SYNTH_FT_DESC", "0") == "1"
 
 _EVENT_TYPE_DE = {
     1: "shot",
@@ -46,6 +50,7 @@ _CANONICAL_COLUMNS = [
     "event_length",
     "action_number",
     "order_number",
+    "eventnum",
     "time_actual",
     "team_id",
     "team_tricode",
@@ -63,6 +68,8 @@ _CANONICAL_COLUMNS = [
     "home_team_abbrev",
     "away_team_id",
     "away_team_abbrev",
+    "homedescription",
+    "visitordescription",
     "game_date",
     "season",
     "family",
@@ -91,6 +98,7 @@ _CANONICAL_COLUMNS = [
     "possession_after",
     "score_home",
     "score_away",
+    "scoremargin",
     "is_turnover",
     "is_steal",
     "is_block",
@@ -167,7 +175,17 @@ class _SidecarCollector:
 
 def _qualifiers_list(action: Dict[str, Any]) -> List[str]:
     quals = action.get("qualifiers") or []
-    return sorted({q.lower() for q in quals})
+    normalized = {canon_str(q) for q in quals if q}
+    return sorted(q for q in normalized if q)
+
+
+def _scoremargin_str(score_home: Optional[int], score_away: Optional[int]) -> str:
+    try:
+        if score_home is None or score_away is None:
+            return ""
+        return str(int(score_home) - int(score_away))
+    except Exception:
+        return ""
 
 
 def _family_from_action(action: Dict[str, Any]) -> str:
@@ -232,6 +250,8 @@ def parse_actions_to_rows(
             ts = ts.tz_convert(None)
         season_val = get_season(ts.to_pydatetime())
 
+    mapping = load_mapping(mapping_yaml_path)
+
     rows: List[Dict[str, Any]] = []
     sidecars = _SidecarCollector()
 
@@ -245,7 +265,9 @@ def parse_actions_to_rows(
         secs = seconds_elapsed(action.get("period"), pctimestring)
 
         descriptor_core, style_flags = normalize_descriptor(action.get("descriptor"))
-        subfamily = action.get("subType") or descriptor_core
+        subfamily_raw = action.get("subType") or descriptor_core
+        subfamily_norm = canon_str(subfamily_raw)
+        subfamily = subfamily_norm or subfamily_raw
         shot_result = action.get("shotResult")
         eventmsgtype = eventmsgtype_for(family, shot_result, subfamily)
         eventmsgactiontype = actiontype_code_for(family, subfamily)
@@ -258,6 +280,16 @@ def parse_actions_to_rows(
         team_id_int = _int_or_zero(team_id_raw)
         event_team = action.get("teamTricode") or ""
         opp_team_id = _opponent_team_id(team_id_int, home_id, away_id)
+
+        qualifiers_list = _qualifiers_list(action)
+
+        sig_key = (
+            canon_str(family),
+            canon_str(subfamily),
+            canon_str(descriptor_core),
+            tuple(sorted(canon_str(q) for q in qualifiers_list)),
+        )
+        overrides = mapping.get(sig_key)
 
         ft_n_val: Optional[int] = None
         ft_m_val: Optional[int] = None
@@ -275,6 +307,7 @@ def parse_actions_to_rows(
             "event_length": None,
             "action_number": action.get("actionNumber"),
             "order_number": action.get("orderNumber"),
+            "eventnum": action.get("actionNumber"),
             "time_actual": action.get("timeActual"),
             "team_id": action.get("teamId"),
             "team_tricode": action.get("teamTricode"),
@@ -292,7 +325,9 @@ def parse_actions_to_rows(
             "home_team_abbrev": home_tri,
             "away_team_id": away_id,
             "away_team_abbrev": away_tri,
-            "game_date": game_date,
+            "homedescription": "",
+            "visitordescription": "",
+            "game_date": game_timestamp,
             "season": season_val if season_val is not None else 0,
             "family": family,
             "subfamily": subfamily,
@@ -312,7 +347,7 @@ def parse_actions_to_rows(
             "block_id": None,
             "steal_id": action.get("stealPersonId"),
             "style_flags": style_flags,
-            "qualifiers": _qualifiers_list(action),
+            "qualifiers": qualifiers_list,
             "is_o_rebound": 1 if family == "rebound" and subfamily == "offensive" else 0,
             "is_d_rebound": 1 if family == "rebound" and subfamily == "defensive" else 0,
             "team_rebound": 1 if (action.get("personId") in (0, None)) else 0,
@@ -320,12 +355,23 @@ def parse_actions_to_rows(
             "possession_after": action.get("possession"),
             "score_home": score_home,
             "score_away": score_away,
+            "scoremargin": _scoremargin_str(score_home, score_away),
             "is_turnover": 1 if family == "turnover" else 0,
             "is_steal": 0,
             "is_block": 0,
             "ft_n": ft_n_val,
             "ft_m": ft_m_val,
         }
+
+        if overrides:
+            if family not in {"2pt", "3pt"} and "eventmsgtype" in overrides:
+                row["eventmsgtype"] = int(overrides["eventmsgtype"])
+            if "eventmsgactiontype" in overrides:
+                row["eventmsgactiontype"] = int(overrides["eventmsgactiontype"])
+            if overrides.get("subfamily"):
+                row["subfamily"] = str(overrides["subfamily"])
+            row["event_type_de"] = _EVENT_TYPE_DE.get(row["eventmsgtype"], "")
+
         sidecars.apply(action, row)
 
         row["assist_id"] = _int_or_zero(row.get("assist_id"))
@@ -353,7 +399,12 @@ def parse_actions_to_rows(
         row["player3_id"] = _int_or_zero(row.get("player3_id"))
         row["player2_team_id"] = _int_or_zero(row.get("player2_team_id"))
         row["player3_team_id"] = _int_or_zero(row.get("player3_team_id"))
-        row["is_steal"] = 1 if row["is_turnover"] and _int_or_zero(row.get("steal_id")) else 0
+        eventmsgtype_final = _int_or_zero(row.get("eventmsgtype"))
+        row["event_type_de"] = _EVENT_TYPE_DE.get(eventmsgtype_final, "")
+        row["is_turnover"] = 1 if eventmsgtype_final == 5 else 0
+        row["is_steal"] = (
+            1 if row["is_turnover"] and _int_or_zero(row.get("steal_id")) else 0
+        )
         row["is_block"] = (
             1
             if family in {"2pt", "3pt"}
@@ -361,6 +412,20 @@ def parse_actions_to_rows(
             and _int_or_zero(row.get("block_id"))
             else 0
         )
+
+        if (
+            _SYNTH_FT_DESC
+            and family == "freethrow"
+            and ft_n_val is not None
+            and ft_m_val is not None
+        ):
+            if row.get("team_id") == home_id:
+                row["homedescription"] = f"Free Throw {ft_n_val} of {ft_m_val}"
+                row["visitordescription"] = ""
+            elif row.get("team_id") == away_id:
+                row["visitordescription"] = f"Free Throw {ft_n_val} of {ft_m_val}"
+                row["homedescription"] = ""
+
         rows.append(row)
 
     df = pd.DataFrame(rows, columns=_CANONICAL_COLUMNS)

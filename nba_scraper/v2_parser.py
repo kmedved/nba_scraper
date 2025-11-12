@@ -6,8 +6,9 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
-from .mapping.descriptor_norm import normalize_descriptor
+from .mapping.descriptor_norm import canon_str, normalize_descriptor
 from .helper_functions import get_season, seconds_elapsed
+from .mapping.loader import load_mapping
 
 _EVENT_TYPE_DE = {
     1: "shot",
@@ -42,6 +43,7 @@ _CANONICAL_COLUMNS = [
     "event_length",
     "action_number",
     "order_number",
+    "eventnum",
     "time_actual",
     "team_id",
     "team_tricode",
@@ -87,6 +89,7 @@ _CANONICAL_COLUMNS = [
     "possession_after",
     "score_home",
     "score_away",
+    "scoremargin",
     "is_turnover",
     "is_steal",
     "is_block",
@@ -181,16 +184,14 @@ def _points_made(family: str, shot_made: Optional[int]) -> int:
     return 2
 
 
-def _subfamily(row: pd.Series, family: str) -> str:
+def _subfamily(row: pd.Series, family: str, descriptor_core: str) -> str:
     raw = row.get("eventmsgactiontype")
     if pd.isna(raw):
         raw = None
-    descriptor = row.get("homedescription") or row.get("visitordescription")
-    desc_core, _ = normalize_descriptor(descriptor)
-    if family in {"turnover", "foul", "violation"} and desc_core:
-        return desc_core
+    if family in {"turnover", "foul", "violation"} and descriptor_core:
+        return descriptor_core
     if raw is None:
-        return desc_core
+        return descriptor_core
     return str(int(raw))
 
 
@@ -231,12 +232,22 @@ def _ft_trip_from_text(row: pd.Series) -> Tuple[Optional[int], Optional[int]]:
     return None, None
 
 
+def _scoremargin_str(score_home: object, score_away: object) -> str:
+    try:
+        if score_home in (None, "") or score_away in (None, ""):
+            return ""
+        return str(int(score_home) - int(score_away))
+    except Exception:
+        return ""
+
+
 def parse_v2_to_rows(v2_json: Dict, mapping_yaml_path: Optional[str] = None) -> pd.DataFrame:
     df_raw = _load_dataframe(v2_json)
     if df_raw.empty:
         return pd.DataFrame(columns=_CANONICAL_COLUMNS)
 
     home_id, home_tri, away_id, away_tri = _infer_team_meta(df_raw)
+    mapping = load_mapping(mapping_yaml_path)
 
     rows: List[Dict[str, object]] = []
     for _, row in df_raw.iterrows():
@@ -245,10 +256,15 @@ def parse_v2_to_rows(v2_json: Dict, mapping_yaml_path: Optional[str] = None) -> 
         secs = seconds_elapsed(row.get("period"), pctimestring)
         shot_made = _shot_made(row)
         points = _points_made(family, shot_made)
-        subfamily = _subfamily(row, family)
+        descriptor = row.get("homedescription") or row.get("visitordescription")
+        descriptor_core, _ = normalize_descriptor(descriptor)
+        subfamily_raw = _subfamily(row, family, descriptor_core)
+        subfamily_norm = canon_str(subfamily_raw)
+        subfamily = subfamily_norm or subfamily_raw
         team_id_val = _team_id_for_row(row)
         team_tricode = _team_tricode_for_row(row)
         eventmsgtype_val = _int_or_zero(row.get("eventmsgtype"))
+        eventmsgactiontype_val = _int_or_zero(row.get("eventmsgactiontype"))
         steal_id = _int_or_zero(row.get("steal_person_id"))
         block_id = _int_or_zero(row.get("block_person_id"))
         player1_team_id = _int_or_zero(row.get("player1_team_id"))
@@ -264,67 +280,104 @@ def parse_v2_to_rows(v2_json: Dict, mapping_yaml_path: Optional[str] = None) -> 
             if ts.tzinfo is not None:
                 ts = ts.tz_convert(None)
             season_val = get_season(ts.to_pydatetime())
-        rows.append(
-            {
-                "game_id": row.get("game_id"),
-                "period": row.get("period"),
-                "pctimestring": pctimestring,
-                "seconds_elapsed": secs,
-                "event_length": None,
-                "action_number": row.get("eventnum"),
-                "order_number": row.get("eventnum"),
-                "time_actual": row.get("game_clock"),
-                "team_id": team_id_val,
-                "team_tricode": team_tricode,
-                "event_team": team_tricode or "",
-                "player1_id": _int_or_zero(row.get("player1_id")),
-                "player1_name": row.get("player1_name"),
-                "player1_team_id": player1_team_id,
-                "player2_id": _int_or_zero(row.get("player2_id")),
-                "player2_name": row.get("player2_name"),
-                "player2_team_id": player2_team_id,
-                "player3_id": _int_or_zero(row.get("player3_id")),
-                "player3_name": row.get("player3_name"),
-                "player3_team_id": player3_team_id,
-                "home_team_id": home_id,
-                "home_team_abbrev": home_tri,
-                "away_team_id": away_id,
-                "away_team_abbrev": away_tri,
-                "game_date": row.get("game_date"),
-                "season": season_val,
-                "family": family,
-                "subfamily": subfamily,
-                "eventmsgtype": eventmsgtype_val,
-                "eventmsgactiontype": row.get("eventmsgactiontype"),
-                "event_type_de": _EVENT_TYPE_DE.get(eventmsgtype_val, ""),
-                "is_three": 1 if family == "3pt" else 0,
-                "shot_made": shot_made,
-                "points_made": points,
-                "shot_distance": row.get("shot_distance"),
-                "x": row.get("loc_x"),
-                "y": row.get("loc_y"),
-                "side": None,
-                "area": None,
-                "area_detail": None,
-                "assist_id": row.get("assist_person_id"),
-                "block_id": block_id,
-                "steal_id": steal_id,
-                "style_flags": [],
-                "qualifiers": [],
-                "is_o_rebound": 1 if family == "rebound" and "OFF" in str(row.get("homedescription", "")).upper() else 0,
-                "is_d_rebound": 1 if family == "rebound" and "DEF" in str(row.get("homedescription", "")).upper() else 0,
-                "team_rebound": 1 if int(row.get("player1_id", 0) or 0) == 0 else 0,
-                "linked_shot_action_number": None,
-                "possession_after": None,
-                "score_home": row.get("score_home"),
-                "score_away": row.get("score_away"),
-                "is_turnover": 1 if eventmsgtype_val == 5 else 0,
-                "is_steal": 1 if eventmsgtype_val == 5 and steal_id else 0,
-                "is_block": 1 if eventmsgtype_val in (1, 2) and shot_made == 0 and block_id else 0,
-                "ft_n": ft_n_val,
-                "ft_m": ft_m_val,
-            }
+        qualifiers_list: List[str] = []
+        sig_key = (
+            canon_str(family),
+            canon_str(subfamily),
+            canon_str(descriptor_core),
+            tuple(sorted(canon_str(q) for q in qualifiers_list)),
         )
+        overrides = mapping.get(sig_key)
+        eventnum_val = _int_or_zero(row.get("eventnum"))
+
+        row_dict: Dict[str, object] = {
+            "game_id": row.get("game_id"),
+            "period": row.get("period"),
+            "pctimestring": pctimestring,
+            "seconds_elapsed": secs,
+            "event_length": None,
+            "action_number": eventnum_val,
+            "order_number": eventnum_val,
+            "eventnum": eventnum_val,
+            "time_actual": row.get("game_clock"),
+            "team_id": team_id_val,
+            "team_tricode": team_tricode,
+            "event_team": team_tricode or "",
+            "player1_id": _int_or_zero(row.get("player1_id")),
+            "player1_name": row.get("player1_name"),
+            "player1_team_id": player1_team_id,
+            "player2_id": _int_or_zero(row.get("player2_id")),
+            "player2_name": row.get("player2_name"),
+            "player2_team_id": player2_team_id,
+            "player3_id": _int_or_zero(row.get("player3_id")),
+            "player3_name": row.get("player3_name"),
+            "player3_team_id": player3_team_id,
+            "home_team_id": home_id,
+            "home_team_abbrev": home_tri,
+            "away_team_id": away_id,
+            "away_team_abbrev": away_tri,
+            "game_date": row.get("game_date"),
+            "season": season_val,
+            "family": family,
+            "subfamily": subfamily,
+            "eventmsgtype": eventmsgtype_val,
+            "eventmsgactiontype": eventmsgactiontype_val,
+            "event_type_de": _EVENT_TYPE_DE.get(eventmsgtype_val, ""),
+            "is_three": 1 if family == "3pt" else 0,
+            "shot_made": shot_made,
+            "points_made": points,
+            "shot_distance": row.get("shot_distance"),
+            "x": row.get("loc_x"),
+            "y": row.get("loc_y"),
+            "side": None,
+            "area": None,
+            "area_detail": None,
+            "assist_id": _int_or_zero(row.get("assist_person_id")),
+            "block_id": block_id,
+            "steal_id": steal_id,
+            "style_flags": [],
+            "qualifiers": qualifiers_list,
+            "is_o_rebound": 1 if family == "rebound" and "OFF" in str(row.get("homedescription", "")).upper() else 0,
+            "is_d_rebound": 1 if family == "rebound" and "DEF" in str(row.get("homedescription", "")).upper() else 0,
+            "team_rebound": 1 if _int_or_zero(row.get("player1_id")) == 0 else 0,
+            "linked_shot_action_number": None,
+            "possession_after": None,
+            "score_home": row.get("score_home"),
+            "score_away": row.get("score_away"),
+            "scoremargin": _scoremargin_str(row.get("score_home"), row.get("score_away")),
+            "is_turnover": 1 if eventmsgtype_val == 5 else 0,
+            "is_steal": 1 if eventmsgtype_val == 5 and steal_id else 0,
+            "is_block": 1 if eventmsgtype_val in (1, 2) and shot_made == 0 and block_id else 0,
+            "ft_n": ft_n_val,
+            "ft_m": ft_m_val,
+        }
+
+        if overrides:
+            if family not in {"2pt", "3pt"} and "eventmsgtype" in overrides:
+                row_dict["eventmsgtype"] = int(overrides["eventmsgtype"])
+            if "eventmsgactiontype" in overrides:
+                row_dict["eventmsgactiontype"] = int(overrides["eventmsgactiontype"])
+            if overrides.get("subfamily"):
+                row_dict["subfamily"] = str(overrides["subfamily"])
+            row_dict["event_type_de"] = _EVENT_TYPE_DE.get(
+                _int_or_zero(row_dict.get("eventmsgtype")), ""
+            )
+
+        eventmsgtype_final = _int_or_zero(row_dict.get("eventmsgtype"))
+        row_dict["event_type_de"] = _EVENT_TYPE_DE.get(eventmsgtype_final, "")
+        row_dict["is_turnover"] = 1 if eventmsgtype_final == 5 else 0
+        row_dict["is_steal"] = (
+            1 if eventmsgtype_final == 5 and _int_or_zero(row_dict.get("steal_id")) else 0
+        )
+        row_dict["is_block"] = (
+            1
+            if eventmsgtype_final in (1, 2)
+            and shot_made == 0
+            and _int_or_zero(row_dict.get("block_id"))
+            else 0
+        )
+
+        rows.append(row_dict)
 
     df = pd.DataFrame(rows, columns=_CANONICAL_COLUMNS)
     df = df.sort_values(["period", "seconds_elapsed", "order_number"], kind="mergesort")
