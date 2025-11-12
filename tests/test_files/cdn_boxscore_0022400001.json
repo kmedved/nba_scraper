@@ -1,0 +1,23 @@
+{
+  "game": {
+    "gameId": "0022400001",
+    "gameTimeUTC": "2024-10-24",
+    "homeTeam": {
+      "teamId": 1610612747,
+      "teamTricode": "LAL",
+      "players": [
+        {"personId": 2544, "firstName": "LeBron", "lastName": "James"},
+        {"personId": 2732, "firstName": "Patrick", "lastName": "Beverley"},
+        {"personId": 203076, "firstName": "Dennis", "lastName": "Schroder"}
+      ]
+    },
+    "awayTeam": {
+      "teamId": 1610612737,
+      "teamTricode": "ATL",
+      "players": [
+        {"personId": 201143, "firstName": "Paul", "lastName": "Millsap"},
+        {"personId": 201939, "firstName": "Stephen", "lastName": "Curry"}
+      ]
+    }
+  }
+}
