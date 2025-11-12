@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
@@ -9,6 +10,9 @@ from typing import Any, Dict, Optional, Tuple, Union
 import pandas as pd
 
 from . import cdn_client, cdn_parser, lineup_builder, v2_parser
+from .coords_backfill import backfill_coords_with_shotchart
+
+_BACKFILL_COORDS = os.getenv("NBA_SCRAPER_BACKFILL_COORDS", "0") == "1"
 
 
 class SourceKind(str, Enum):
@@ -28,6 +32,106 @@ def load_json(path_or_dict: Union[str, Path, Dict[str, Any]], kind: SourceKind) 
     raise ValueError(f"Unsupported load_json kind: {kind}")
 
 
+def _coalesce(*values: Any) -> Any:
+    for value in values:
+        if value in (None, "", []):
+            continue
+        return value
+    return None
+
+
+def _shotchart_payload_to_df(payload: Dict[str, Any]) -> pd.DataFrame:
+    shots: list[dict[str, Any]] = []
+
+    def _collect_shots(team_blob: Dict[str, Any]) -> None:
+        for shot in (team_blob or {}).get("shots", []) or []:
+            game_id = _coalesce(
+                shot.get("gameId"),
+                shot.get("game_id"),
+                payload.get("gameId"),
+                payload.get("game_id"),
+            )
+            eventnum = _coalesce(
+                shot.get("gameEventId"),
+                shot.get("eventnum"),
+                shot.get("eventNum"),
+                shot.get("eventId"),
+                shot.get("actionNumber"),
+                shot.get("orderNumber"),
+            )
+            x_val = _coalesce(shot.get("x"), shot.get("shotX"), shot.get("shot_x"))
+            y_val = _coalesce(shot.get("y"), shot.get("shotY"), shot.get("shot_y"))
+            dist = _coalesce(
+                shot.get("shotDistance"),
+                shot.get("shot_distance"),
+                shot.get("distance"),
+            )
+            shots.append(
+                {
+                    "game_id": game_id,
+                    "eventnum": eventnum,
+                    "x": x_val,
+                    "y": y_val,
+                    "shot_distance": dist,
+                }
+            )
+
+    if not isinstance(payload, dict):
+        return pd.DataFrame(columns=["game_id", "eventnum", "x", "y", "shot_distance"])
+
+    if "shots" in payload and isinstance(payload.get("shots"), list):
+        _collect_shots({"shots": payload["shots"]})
+
+    game_section = (payload or {}).get("game", {})
+    if "teams" in payload:
+        for team_blob in (payload.get("teams") or []):
+            if isinstance(team_blob, dict):
+                _collect_shots(team_blob)
+    for side in ("homeTeam", "awayTeam"):
+        team_blob = game_section.get(side)
+        if isinstance(team_blob, dict):
+            _collect_shots(team_blob)
+
+    if not shots:
+        return pd.DataFrame(columns=["game_id", "eventnum", "x", "y", "shot_distance"])
+
+    return pd.DataFrame(shots, columns=["game_id", "eventnum", "x", "y", "shot_distance"])
+
+
+def _fetch_shotchart_df(game_id: str) -> Optional[pd.DataFrame]:
+    try:
+        payload = cdn_client.fetch_shotchart(game_id)
+    except Exception:
+        return None
+    df = _shotchart_payload_to_df(payload)
+    return df if not df.empty else None
+
+
+def _load_local_shotchart(game_ref: Tuple[Union[str, Path], Optional[Union[str, Path]]]) -> Optional[pd.DataFrame]:
+    pbp_ref, _ = game_ref
+    if isinstance(pbp_ref, dict):
+        payload = pbp_ref.get("shotchart") if isinstance(pbp_ref, dict) else None
+        if isinstance(payload, dict):
+            df = _shotchart_payload_to_df(payload)
+            return df if not df.empty else None
+        return None
+    pbp_path = Path(pbp_ref)
+    candidates = [
+        pbp_path.with_name(pbp_path.name.replace("playbyplay", "shotchart")),
+        pbp_path.with_suffix(".shotchart.json"),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            try:
+                payload = load_json(candidate, SourceKind.CDN_LOCAL)
+            except Exception:
+                continue
+            df = _shotchart_payload_to_df(payload)
+            if not df.empty:
+                return df
+    return None
+
+
 def parse_any(
     game_ref: Union[str, Tuple[Union[str, Path], Optional[Union[str, Path]]], Dict[str, Any]],
     kind: SourceKind,
@@ -43,6 +147,10 @@ def parse_any(
         except Exception:
             box_json = None
         df = cdn_parser.parse_actions_to_rows(pbp_json, box_json or {}, mapping_yaml_path)
+        if _BACKFILL_COORDS:
+            shotchart_df = _fetch_shotchart_df(game_ref)
+            if shotchart_df is not None:
+                df = backfill_coords_with_shotchart(df, shotchart_df)
         return lineup_builder.attach_lineups(
             df, box_json=box_json, pbp_json=pbp_json
         )
@@ -64,6 +172,10 @@ def parse_any(
             else load_json(box_ref, SourceKind.CDN_LOCAL)
         )
         df = cdn_parser.parse_actions_to_rows(pbp_json, box_json, mapping_yaml_path)
+        if _BACKFILL_COORDS:
+            shotchart_df = _load_local_shotchart((pbp_ref, box_ref))
+            if shotchart_df is not None:
+                df = backfill_coords_with_shotchart(df, shotchart_df)
         return lineup_builder.attach_lineups(
             df, box_json=box_json, pbp_json=pbp_json
         )
