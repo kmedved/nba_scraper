@@ -14,6 +14,7 @@ from .mapping.event_codebook import (
 )
 from .helper_functions import get_season, iso_clock_to_pctimestring, seconds_elapsed
 from .mapping.loader import load_mapping
+from .parser_utils import _fill_team_fields, _synth_xy, infer_possession_after
 
 _SYNTH_FT_DESC = os.getenv("NBA_SCRAPER_SYNTH_FT_DESC", "0") == "1"
 
@@ -426,6 +427,24 @@ def parse_actions_to_rows(
                 row["visitordescription"] = f"Free Throw {ft_n_val} of {ft_m_val}"
                 row["homedescription"] = ""
 
+        _fill_team_fields(row)
+
+        x_val = row.get("x")
+        y_val = row.get("y")
+        if family in {"2pt", "3pt"} and (x_val is None or y_val is None):
+            synth_x, synth_y = _synth_xy(
+                row.get("area"), row.get("area_detail"), row.get("side")
+            )
+            if synth_x is None or synth_y is None:
+                fallback = {"2pt": (50.0, 50.0), "3pt": (50.0, 82.0)}.get(family)
+                if fallback:
+                    synth_x, synth_y = fallback
+            if synth_x is not None and synth_y is not None:
+                row["x"], row["y"] = synth_x, synth_y
+                flags = set(row.get("style_flags") or [])
+                flags.add("xy_synth")
+                row["style_flags"] = sorted(flags)
+
         rows.append(row)
 
     df = pd.DataFrame(rows, columns=_CANONICAL_COLUMNS)
@@ -435,4 +454,5 @@ def parse_actions_to_rows(
     df = df.sort_values(["period", "order_number", "action_number"], kind="mergesort")
     df["event_length"] = df.groupby("period")["seconds_elapsed"].diff(-1).abs()
     df["event_length"] = df["event_length"].fillna(0)
+    df = infer_possession_after(df)
     return df.reset_index(drop=True)

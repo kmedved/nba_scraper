@@ -10,6 +10,7 @@ import pandas as pd
 from .mapping.descriptor_norm import canon_str, normalize_descriptor
 from .helper_functions import get_season, seconds_elapsed
 from .mapping.loader import load_mapping
+from .parser_utils import _fill_team_fields, _synth_xy, infer_possession_after
 
 _EVENT_TYPE_DE = {
     1: "shot",
@@ -378,10 +379,31 @@ def parse_v2_to_rows(v2_json: Dict, mapping_yaml_path: Optional[str] = None) -> 
             else 0
         )
 
+        _fill_team_fields(row_dict)
+
+        if row_dict["family"] in {"2pt", "3pt"} and (
+            row_dict.get("x") is None or row_dict.get("y") is None
+        ):
+            synth_x, synth_y = _synth_xy(
+                row_dict.get("area"), row_dict.get("area_detail"), row_dict.get("side")
+            )
+            if synth_x is None or synth_y is None:
+                fallback = {"2pt": (50.0, 50.0), "3pt": (50.0, 82.0)}.get(
+                    row_dict["family"]
+                )
+                if fallback:
+                    synth_x, synth_y = fallback
+            if synth_x is not None and synth_y is not None:
+                row_dict["x"], row_dict["y"] = synth_x, synth_y
+                flags = set(row_dict.get("style_flags") or [])
+                flags.add("xy_synth")
+                row_dict["style_flags"] = sorted(flags)
+
         rows.append(row_dict)
 
     df = pd.DataFrame(rows, columns=_CANONICAL_COLUMNS)
     df = df.sort_values(["period", "seconds_elapsed", "order_number"], kind="mergesort")
     df["event_length"] = df.groupby("period")["seconds_elapsed"].diff(-1).abs()
     df["event_length"] = df["event_length"].fillna(0)
+    df = infer_possession_after(df)
     return df.reset_index(drop=True)

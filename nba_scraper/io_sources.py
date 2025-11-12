@@ -43,18 +43,30 @@ def parse_any(
         except Exception:
             box_json = None
         df = cdn_parser.parse_actions_to_rows(pbp_json, box_json or {}, mapping_yaml_path)
-        return lineup_builder.attach_lineups(df, box_json=box_json)
+        return lineup_builder.attach_lineups(
+            df, box_json=box_json, pbp_json=pbp_json
+        )
 
     if kind == SourceKind.CDN_LOCAL:
         if not isinstance(game_ref, (tuple, list)) or len(game_ref) != 2:
             raise TypeError("CDN_LOCAL requires (pbp_path, box_path)")
-        pbp_path, box_path = game_ref
-        pbp_json = load_json(pbp_path, SourceKind.CDN_LOCAL)
-        if box_path is None:
+        pbp_ref, box_ref = game_ref
+        pbp_json = (
+            pbp_ref
+            if isinstance(pbp_ref, dict)
+            else load_json(pbp_ref, SourceKind.CDN_LOCAL)
+        )
+        if box_ref is None:
             raise TypeError("CDN_LOCAL requires box score path")
-        box_json = load_json(box_path, SourceKind.CDN_LOCAL)
+        box_json = (
+            box_ref
+            if isinstance(box_ref, dict)
+            else load_json(box_ref, SourceKind.CDN_LOCAL)
+        )
         df = cdn_parser.parse_actions_to_rows(pbp_json, box_json, mapping_yaml_path)
-        return lineup_builder.attach_lineups(df, box_json=box_json)
+        return lineup_builder.attach_lineups(
+            df, box_json=box_json, pbp_json=pbp_json
+        )
 
     if kind == SourceKind.V2_LOCAL:
         if not isinstance(game_ref, (str, Path)):
