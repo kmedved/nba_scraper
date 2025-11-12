@@ -7,6 +7,8 @@ import pytest
 
 pytest.importorskip("pandas")
 
+import pandas as pd
+
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from nba_scraper import cdn_parser, lineup_builder, v2_parser
@@ -23,7 +25,7 @@ def test_cdn_parse_basic():
     pbp = _load_json("cdn_playbyplay_0022400001.json")
     box = _load_json("cdn_boxscore_0022400001.json")
     df = cdn_parser.parse_actions_to_rows(pbp, box)
-    df = lineup_builder.attach_lineups(df)
+    df = lineup_builder.attach_lineups(df, box_json=box)
     assert not df.empty
     assert "home_player_1_id" in df.columns
     assert {"eventnum", "season"}.issubset(df.columns)
@@ -157,3 +159,23 @@ def test_cdn_synth_ft_description(monkeypatch):
     monkeypatch.setenv("NBA_SCRAPER_SYNTH_FT_DESC", "0")
     module = importlib.reload(module)
     globals()["cdn_parser"] = module
+
+
+def test_lineups_have_ten_players_every_row():
+    pbp = _load_json("cdn_playbyplay_0022400001.json")
+    box = _load_json("cdn_boxscore_0022400001.json")
+    df = cdn_parser.parse_actions_to_rows(pbp, box)
+    df = lineup_builder.attach_lineups(df, box_json=box)
+
+    home_cols = [f"home_player_{i}_id" for i in range(1, 6)]
+    away_cols = [f"away_player_{i}_id" for i in range(1, 6)]
+    numeric = (
+        df[home_cols + away_cols]
+        .apply(pd.to_numeric, errors="coerce")
+        .fillna(0)
+        .astype(int)
+    )
+    cnt = (numeric > 0).sum(axis=1)
+
+    live = ~df["event_type_de"].isin(["period", "timeout"])
+    assert (cnt[live] == 10).all()

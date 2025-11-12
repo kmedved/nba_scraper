@@ -6,17 +6,26 @@
       "teamId": 1610612747,
       "teamTricode": "LAL",
       "players": [
-        {"personId": 2544, "firstName": "LeBron", "lastName": "James"},
-        {"personId": 2732, "firstName": "Patrick", "lastName": "Beverley"},
-        {"personId": 203076, "firstName": "Dennis", "lastName": "Schroder"}
+        {"personId": 2544, "firstName": "LeBron", "lastName": "James", "starter": true, "starterPosition": "F", "status": "ACTIVE"},
+        {"personId": 2732, "firstName": "Patrick", "lastName": "Beverley", "starter": true, "starterPosition": "G", "status": "ACTIVE"},
+        {"personId": 203076, "firstName": "Dennis", "lastName": "Schroder", "starter": true, "starterPosition": "G", "status": "ACTIVE"},
+        {"personId": 201566, "firstName": "Marc", "lastName": "Gasol", "starter": true, "starterPosition": "C", "status": "ACTIVE"},
+        {"personId": 1629029, "firstName": "Austin", "lastName": "Reaves", "starter": true, "starterPosition": "G", "status": "ACTIVE"},
+        {"personId": 2733, "firstName": "Jared", "lastName": "Dudley", "status": "ACTIVE"},
+        {"personId": 203210, "firstName": "Kentavious", "lastName": "Caldwell-Pope", "status": "ACTIVE"}
       ]
     },
     "awayTeam": {
       "teamId": 1610612737,
       "teamTricode": "ATL",
       "players": [
-        {"personId": 201143, "firstName": "Paul", "lastName": "Millsap"},
-        {"personId": 201939, "firstName": "Stephen", "lastName": "Curry"}
+        {"personId": 201143, "firstName": "Paul", "lastName": "Millsap", "starter": true, "starterPosition": "F", "status": "ACTIVE"},
+        {"personId": 201939, "firstName": "Stephen", "lastName": "Curry", "starter": true, "starterPosition": "G", "status": "ACTIVE"},
+        {"personId": 203114, "firstName": "Klay", "lastName": "Thompson", "starter": true, "starterPosition": "G", "status": "ACTIVE"},
+        {"personId": 202691, "firstName": "Draymond", "lastName": "Green", "starter": true, "starterPosition": "F", "status": "ACTIVE"},
+        {"personId": 203552, "firstName": "Andrew", "lastName": "Wiggins", "starter": true, "starterPosition": "F", "status": "ACTIVE"},
+        {"personId": 1628369, "firstName": "Kevon", "lastName": "Looney", "status": "ACTIVE"},
+        {"personId": 1629651, "firstName": "Jordan", "lastName": "Poole", "status": "ACTIVE"}
       ]
     }
   }

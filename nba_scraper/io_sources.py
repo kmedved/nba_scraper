@@ -37,9 +37,13 @@ def parse_any(
         if not isinstance(game_ref, str):
             raise TypeError("CDN_REMOTE requires a game id string")
         pbp_json = cdn_client.fetch_pbp(game_ref)
-        box_json = cdn_client.fetch_box(game_ref)
-        df = cdn_parser.parse_actions_to_rows(pbp_json, box_json, mapping_yaml_path)
-        return lineup_builder.attach_lineups(df)
+        box_json = None
+        try:
+            box_json = cdn_client.fetch_box(game_ref)
+        except Exception:
+            box_json = None
+        df = cdn_parser.parse_actions_to_rows(pbp_json, box_json or {}, mapping_yaml_path)
+        return lineup_builder.attach_lineups(df, box_json=box_json)
 
     if kind == SourceKind.CDN_LOCAL:
         if not isinstance(game_ref, (tuple, list)) or len(game_ref) != 2:
@@ -50,7 +54,7 @@ def parse_any(
             raise TypeError("CDN_LOCAL requires box score path")
         box_json = load_json(box_path, SourceKind.CDN_LOCAL)
         df = cdn_parser.parse_actions_to_rows(pbp_json, box_json, mapping_yaml_path)
-        return lineup_builder.attach_lineups(df)
+        return lineup_builder.attach_lineups(df, box_json=box_json)
 
     if kind == SourceKind.V2_LOCAL:
         if not isinstance(game_ref, (str, Path)):
