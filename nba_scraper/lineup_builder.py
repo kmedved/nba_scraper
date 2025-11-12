@@ -210,7 +210,7 @@ def attach_lineups(
 
     for _, row in df.iterrows():
         player_id = _safe_int(row.get("player1_id"))
-        event_team_id = _resolve_team_from_row(row)
+        event_team_id = _resolve_team_from_row(row) or _safe_int(row.get("player1_team_id"))
         if event_team_id and home_id and event_team_id == home_id:
             if player_id and player_id not in home_candidates:
                 home_candidates.append(player_id)
