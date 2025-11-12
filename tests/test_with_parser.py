@@ -37,6 +37,7 @@ def test_cdn_frame_works_with_nba_parser():
         "home_player_1_id",
         "away_player_5_id",
     }
+    required |= {"eventnum", "scoremargin"}
     assert required.issubset(df.columns)
 
     pbp = PbP(df)

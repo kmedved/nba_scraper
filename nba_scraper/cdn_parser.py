@@ -250,7 +250,7 @@ def parse_actions_to_rows(
             ts = ts.tz_convert(None)
         season_val = get_season(ts.to_pydatetime())
 
-    mapping = load_mapping(mapping_yaml_path)
+    mapping = load_mapping(mapping_yaml_path or os.getenv("NBA_SCRAPER_MAP"))
 
     rows: List[Dict[str, Any]] = []
     sidecars = _SidecarCollector()

@@ -133,6 +133,25 @@
         "actionNumber": 9,
         "orderNumber": 9,
         "period": 1,
+        "clock": "PT09M00.00S",
+        "actionType": "freethrow",
+        "subType": "technical",
+        "teamId": 1610612747,
+        "teamTricode": "LAL",
+        "personId": 2544,
+        "playerName": "LeBron James",
+        "shotResult": "Made",
+        "shotActionNumber": 3,
+        "descriptor": "technical free throw",
+        "score": {
+          "home": 1,
+          "away": 3
+        }
+      },
+      {
+        "actionNumber": 10,
+        "orderNumber": 10,
+        "period": 1,
         "clock": "PT00M00.00S",
         "actionType": "period",
         "subType": "end",
