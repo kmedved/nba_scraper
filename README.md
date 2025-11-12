@@ -32,6 +32,8 @@ includes:
   team identifiers populated for assists, steals and blocks.
 * `is_turnover`, `is_steal`, `is_block` – boolean flags used by possession
   aggregators.
+* `eventnum` – stable event ordinal (alias of CDN `action_number` / V2 `eventnum`).
+* `scoremargin` – home score minus away score as a string (compatible with legacy consumers).
 * `ft_n` and `ft_m` – structured free-throw trip counters extracted from the
   feed and normalised for technical/single attempts.
 * `season` – derived from the UTC tip-off date.

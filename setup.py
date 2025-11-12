@@ -5,6 +5,7 @@ with open("README.md", "r") as fh:
 setup(
     name="nba_scraper",
     packages=find_packages(),
+    include_package_data=True,
     version="1.2.1",
     license="GNU General Public License v3.0",
     description="Unified NBA play-by-play scraper for CDN and legacy sources",

@@ -22,7 +22,8 @@ class PbP:
 
         # done to handle PbP classes created from imported csv files versus
         # those that are created by nba_scraper that handles game_date as a
-        # proper datetime dtype
+        # proper datetime dtype. nba_scraper may supply datetime64[ns, UTC]
+        # or an ISO-formatted string; both are normalised here.
         if self.df["game_date"].dtypes == "O":
             self.game_date = datetime.strptime(
                 pbp_df["game_date"].unique()[0], "%Y-%m-%d"

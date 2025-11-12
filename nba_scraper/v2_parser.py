@@ -1,6 +1,7 @@
 """Parser that converts legacy stats.nba.com v2 JSON into canonical rows."""
 from __future__ import annotations
 
+import os
 import re
 from typing import Dict, List, Optional, Tuple
 
@@ -247,7 +248,7 @@ def parse_v2_to_rows(v2_json: Dict, mapping_yaml_path: Optional[str] = None) -> 
         return pd.DataFrame(columns=_CANONICAL_COLUMNS)
 
     home_id, home_tri, away_id, away_tri = _infer_team_meta(df_raw)
-    mapping = load_mapping(mapping_yaml_path)
+    mapping = load_mapping(mapping_yaml_path or os.getenv("NBA_SCRAPER_MAP"))
 
     rows: List[Dict[str, object]] = []
     for _, row in df_raw.iterrows():
