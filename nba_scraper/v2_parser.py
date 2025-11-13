@@ -341,7 +341,9 @@ def parse_v2_to_rows(v2_json: Dict, mapping_yaml_path: Optional[str] = None) -> 
             "qualifiers": qualifiers_list,
             "is_o_rebound": 1 if family == "rebound" and "OFF" in str(row.get("homedescription", "")).upper() else 0,
             "is_d_rebound": 1 if family == "rebound" and "DEF" in str(row.get("homedescription", "")).upper() else 0,
-            "team_rebound": 1 if _int_or_zero(row.get("player1_id")) == 0 else 0,
+            "team_rebound": 1
+            if (family == "rebound" and _int_or_zero(row.get("player1_id")) == 0)
+            else 0,
             "linked_shot_action_number": None,
             "possession_after": None,
             "score_home": row.get("score_home"),

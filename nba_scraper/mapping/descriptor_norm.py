@@ -48,7 +48,21 @@ def canon_str(value: Optional[str]) -> str:
 
 
 def _tokenize_descriptor(text: str) -> List[str]:
-    tokens = []
+    """
+    Tokenize the descriptor text, applying multi-word and single-word synonyms.
+    Assumes `text` has already been normalized via `canon_str`.
+    """
+    if not text:
+        return []
+
+    # Multi-word synonyms on the canonical string.
+    for phrase, replacement in DESC_SYNONYMS.items():
+        if " " in phrase:
+            phrase_norm = canon_str(phrase)
+            if phrase_norm and phrase_norm in text:
+                text = text.replace(phrase_norm, replacement)
+
+    tokens: List[str] = []
     for raw_token in text.split():
         token = DESC_SYNONYMS.get(raw_token, raw_token)
         tokens.append(token)
