@@ -201,6 +201,11 @@ def attach_lineups(
     home_history: List[List[Optional[int]]] = []
     away_history: List[List[Optional[int]]] = []
 
+    # For CDN-style substitutions we see separate "out" and "in" events.
+    # Maintain simple FIFO queues of pending outs for each team.
+    pending_outs_home: List[int] = []
+    pending_outs_away: List[int] = []
+
     def _resolve_team_from_row(row: pd.Series) -> Optional[int]:
         for key in ("team_id", "player1_team_id", "player2_team_id", "player3_team_id"):
             value = _safe_int(row.get(key))
@@ -221,29 +226,55 @@ def attach_lineups(
                 _update_with_player(away_lineup, player_id)
 
         if row.get("family") == "substitution":
-            sub_out = _safe_int(row.get("player1_id"))
-            sub_in = _safe_int(row.get("player2_id"))
+            subfamily = (row.get("subfamily") or "").strip().lower()
+            raw_player = _safe_int(row.get("player1_id"))
+
+            # Decide which team's queue to use.
             substitution_team = event_team_id
             if not substitution_team:
-                if sub_out and sub_out in home_lineup:
+                # Try to infer from current lineups (useful for older v2-style data).
+                if raw_player and raw_player in home_lineup:
                     substitution_team = home_id
-                elif sub_out and sub_out in away_lineup:
+                elif raw_player and raw_player in away_lineup:
                     substitution_team = away_id
-            target: Optional[List[Optional[int]]] = None
+
             if substitution_team and home_id and substitution_team == home_id:
+                queue = pending_outs_home
                 target = home_lineup
+                candidates = home_candidates
             elif substitution_team and away_id and substitution_team == away_id:
+                queue = pending_outs_away
                 target = away_lineup
-            elif sub_out and sub_out in home_lineup:
-                target = home_lineup
-            elif sub_out and sub_out in away_lineup:
-                target = away_lineup
-            if target is not None:
-                if target is home_lineup and sub_in and sub_in not in home_candidates:
-                    home_candidates.append(sub_in)
-                if target is away_lineup and sub_in and sub_in not in away_candidates:
-                    away_candidates.append(sub_in)
-                if sub_out in target:
+                candidates = away_candidates
+            else:
+                queue = None
+                target = None
+                candidates = None
+
+            sub_out: Optional[int] = None
+            sub_in: Optional[int] = None
+
+            if subfamily in {"out"}:
+                # CDN: "substitution" + subType "out" – only outgoing player present.
+                if queue is not None and raw_player:
+                    queue.append(raw_player)
+            elif subfamily in {"in"}:
+                # CDN: "substitution" + subType "in" – only incoming player present.
+                sub_in = raw_player
+                if queue is not None and queue:
+                    sub_out = queue.pop(0)
+            else:
+                # v2-style: player1_id = out, player2_id = in on the same row.
+                sub_out = raw_player
+                sub_in = _safe_int(row.get("player2_id"))
+
+            if target is not None and (sub_out or sub_in):
+                # Ensure the incoming player is tracked as a candidate.
+                if sub_in and candidates is not None and sub_in not in candidates:
+                    candidates.append(sub_in)
+
+                # Apply the substitution to the current lineup.
+                if sub_out and sub_out in target:
                     idx = target.index(sub_out)
                     target[idx] = sub_in or target[idx]
                 elif sub_in and sub_in not in target:
