@@ -243,21 +243,31 @@ def _points_made(family: str, shot_made: Optional[int]) -> int:
 
 def _score_tuple(action: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
     """
-    Return (score_home, score_away) for an action.
+    Return (score_home, score_away) as integers or (None, None) if unavailable.
 
-    New CDN payloads use top-level `scoreHome` / `scoreAway` fields (strings),
-    while older ones used a nested `score = {"home": ..., "away": ...}` dict.
-    Prefer the nested dict if present, otherwise fall back to the top-level keys.
+    Supports both:
+      - legacy: action["score"] = {"home": int, "away": int}
+      - new:    action["scoreHome"], action["scoreAway"]
     """
+    # Legacy nested score dict
     score = action.get("score")
     if isinstance(score, dict):
-        home = score.get("home")
-        away = score.get("away")
+        home_raw = score.get("home")
+        away_raw = score.get("away")
     else:
-        # New-style CDN: use scoreHome / scoreAway if present
-        home = action.get("scoreHome")
-        away = action.get("scoreAway")
-    return home, away
+        # New CDN fields are strings like "3"
+        home_raw = action.get("scoreHome")
+        away_raw = action.get("scoreAway")
+
+    def _maybe_int(val: Any) -> Optional[int]:
+        if val in (None, "", " "):
+            return None
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return None
+
+    return _maybe_int(home_raw), _maybe_int(away_raw)
 
 
 def _team_meta(box_json: Dict[str, Any]) -> Tuple[int, str, int, str, str]:
@@ -350,6 +360,17 @@ def parse_actions_to_rows(
                 event_team = person_to_tri.get(primary_player_id, "")
         opp_team_id = _opponent_team_id(team_id_int, home_id, away_id)
 
+        # Some newer CDN feeds attach block info directly to the shot action
+        # instead of (or in addition to) a separate "block" sidecar row.
+        block_pid_direct = _int_or_zero(
+            action.get("blockPersonId") or action.get("blockPersonID")
+        )
+        block_name_direct = (
+            action.get("blockPlayerName")
+            or action.get("blockPlayerNameInitial")
+            or ""
+        )
+
         qualifiers_list = _qualifiers_list(action)
 
         sig_key = (
@@ -412,8 +433,7 @@ def parse_actions_to_rows(
             "area": action.get("area"),
             "area_detail": action.get("areaDetail"),
             "assist_id": action.get("assistPersonId"),
-            # Newer CDN payloads often carry block info inline on the shot row
-            "block_id": action.get("blockPersonId"),
+            "block_id": None,
             "steal_id": action.get("stealPersonId"),
             "style_flags": style_flags,
             "qualifiers": qualifiers_list,
@@ -465,6 +485,21 @@ def parse_actions_to_rows(
         row["assist_id"] = _int_or_zero(row.get("assist_id"))
         row["block_id"] = _int_or_zero(row.get("block_id"))
         row["steal_id"] = _int_or_zero(row.get("steal_id"))
+
+        # If sidecars did not populate a block, fall back to the direct block fields
+        if family in {"2pt", "3pt"} and shot_made == 0:
+            if not row["block_id"] and block_pid_direct:
+                row["block_id"] = block_pid_direct
+                # Use block as player3 (blocker)
+                if not _int_or_zero(row.get("player3_id")):
+                    row["player3_id"] = block_pid_direct
+                if not _int_or_zero(row.get("player3_team_id")):
+                    # Blocker is on the opponent team
+                    row["player3_team_id"] = _opponent_team_id(
+                        team_id_int, home_id, away_id
+                    )
+                if not row.get("player3_name"):
+                    row["player3_name"] = block_name_direct
 
         if family in {"2pt", "3pt"} and shot_made == 1:
             assist_id = row.get("assist_id")
