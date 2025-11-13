@@ -465,6 +465,40 @@ def parse_actions_to_rows(
             "ft_m": ft_m_val,
         }
 
+        # For jump balls, prefer to follow v2 semantics:
+        #   player1_id = jumpBallWonPlayer (home/away),
+        #   player2_id = jumpBallLostPlayer,
+        #   player3_id = jumpBallRecovered (if different).
+        if family == "jumpball":
+            won_id = _int_or_zero(action.get("jumpBallWonPersonId"))
+            lost_id = _int_or_zero(action.get("jumpBallLostPersonId"))
+            rec_id = _int_or_zero(
+                action.get("jumpBallRecoverdPersonId")
+                or action.get("jumpBallRecoveredPersonId")
+            )
+            # Determine teams for jumpers from person_to_team map.
+            won_team = person_to_team.get(won_id, 0)
+            lost_team = person_to_team.get(lost_id, 0)
+
+            if won_id:
+                row["player1_id"] = won_id
+                row["player1_team_id"] = won_team
+                row["player1_name"] = _resolve_player_name(
+                    action.get("jumpBallWonPlayerName"), row.get("player1_name")
+                )
+            if lost_id:
+                row["player2_id"] = lost_id
+                row["player2_team_id"] = lost_team
+                row["player2_name"] = _resolve_player_name(
+                    action.get("jumpBallLostPlayerName"), row.get("player2_name")
+                )
+            if rec_id and rec_id not in (won_id, lost_id):
+                row["player3_id"] = rec_id
+                row["player3_team_id"] = person_to_team.get(rec_id, 0)
+                row["player3_name"] = _resolve_player_name(
+                    action.get("jumpBallRecoveredName"), row.get("player3_name")
+                )
+
         if overrides:
             if family not in {"2pt", "3pt"} and "eventmsgtype" in overrides:
                 row["eventmsgtype"] = int(overrides["eventmsgtype"])
