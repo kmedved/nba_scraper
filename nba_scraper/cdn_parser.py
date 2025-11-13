@@ -331,6 +331,16 @@ def parse_actions_to_rows(
         subfamily_raw = action.get("subType") or descriptor_core
         subfamily_norm = canon_str(subfamily_raw)
         subfamily = subfamily_norm or subfamily_raw
+
+        # Special handling for shooting fouls in the CDN feed:
+        # The CDN often sends subType="personal" and descriptor="shooting" for
+        # what should be a "shooting" foul (eventmsgactiontype=2).
+        if family == "foul":
+            st_norm = canon_str(action.get("subType") or "")
+            desc_norm = canon_str(descriptor_core or "")
+            if desc_norm == "shooting" and st_norm == "personal":
+                subfamily = "shooting"
+
         flags = set(style_flags or [])
         if descriptor_core:
             d_norm = canon_str(descriptor_core)
