@@ -332,14 +332,17 @@ def parse_actions_to_rows(
         subfamily_norm = canon_str(subfamily_raw)
         subfamily = subfamily_norm or subfamily_raw
 
-        # Special handling for shooting fouls in the CDN feed:
-        # The CDN often sends subType="personal" and descriptor="shooting" for
-        # what should be a "shooting" foul (eventmsgactiontype=2).
+        # Special handling for certain foul subtypes that are encoded via descriptor.
+        # CDN often uses subType="personal" and puts the real type in `descriptor`.
         if family == "foul":
             st_norm = canon_str(action.get("subType") or "")
             desc_norm = canon_str(descriptor_core or "")
+            # Shooting foul: "shooting personal FOUL"
             if desc_norm == "shooting" and st_norm == "personal":
                 subfamily = "shooting"
+            # Loose-ball foul: "loose ball personal FOUL"
+            elif desc_norm == "loose ball" and (st_norm == "personal" or not st_norm):
+                subfamily = "loose ball"
 
         flags = set(style_flags or [])
         if descriptor_core:
