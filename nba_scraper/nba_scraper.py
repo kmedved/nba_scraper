@@ -91,5 +91,6 @@ def scrape_from_files(
         return df
     Path(data_dir).expanduser().mkdir(parents=True, exist_ok=True)
     output_path = Path(data_dir) / (Path(pbp_path).stem + ".csv")
-    df.to_csv(output_path, index=False)
+    # Write UTF-8 CSV to avoid mangling non-ASCII player names (e.g. "Jović").
+    df.to_csv(output_path, index=False, encoding="utf-8")
     return None
