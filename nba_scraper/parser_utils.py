@@ -91,13 +91,6 @@ def infer_possession_after(df: pd.DataFrame) -> pd.DataFrame:
             except (TypeError, ValueError):
                 return 0
 
-        poss_val = row.get("possession_after")
-        if pd.notna(poss_val) and poss_val not in ("", 0):
-            try:
-                return int(poss_val)
-            except (TypeError, ValueError):
-                return None
-
         team_id = _safe_int(row.get("team_id"))
         event_type = _safe_int(row.get("eventmsgtype"))
         family = row.get("family")
@@ -110,38 +103,67 @@ def infer_possession_after(df: pd.DataFrame) -> pd.DataFrame:
                 return None
             return away_team if tid == home_team else home_team
 
-        if event_type == 5:
-            opp = _opponent(team_id)
-            if opp:
-                return int(opp)
-
         shot_made = _safe_int(row.get("shot_made"))
-        if family in {"2pt", "3pt"} and shot_made == 1:
-            opp = _opponent(team_id)
-            if opp:
-                return int(opp)
-
-        if family == "rebound" and _safe_int(row.get("is_d_rebound")) == 1:
-            return team_id if team_id else None
-
         ft_n_val = _safe_int(row.get("ft_n"))
         ft_m_val = _safe_int(row.get("ft_m"))
-        if family == "freethrow" and ft_n_val and ft_m_val:
+
+        # 1) First, try to infer from the event itself.
+        hint: Optional[int] = None
+
+        # Turnover: ball goes to the opponent.
+        if event_type == 5:  # turnover
+            opp = _opponent(team_id)
+            if opp:
+                hint = opp
+
+        # Made field goal: ball goes to the opponent.
+        elif family in {"2pt", "3pt"} and shot_made == 1:
+            opp = _opponent(team_id)
+            if opp:
+                hint = opp
+
+        # Defensive rebound: rebounder takes possession.
+        elif family == "rebound" and _safe_int(row.get("is_d_rebound")) == 1:
+            hint = team_id or None
+
+        # Last made FT of a trip: ball goes to the opponent.
+        elif (
+            family == "freethrow"
+            and ft_n_val
+            and ft_m_val
+            and ft_n_val == ft_m_val
+            and shot_made == 1
+        ):
+            opp = _opponent(team_id)
+            if opp:
+                hint = opp
+
+        if hint:
+            return int(hint)
+
+        # 2) If we couldn't infer, fall back to the raw possession field.
+        poss_val = row.get("possession_after")
+        if pd.notna(poss_val) and poss_val not in ("", 0):
             try:
-                if ft_n_val == ft_m_val and shot_made == 1:
-                    opp = _opponent(team_id)
-                    if opp:
-                        return int(opp)
-            except Exception:
+                return int(poss_val)
+            except (TypeError, ValueError):
                 return None
+
         return None
 
     hints = df.apply(_next_possession, axis=1)
     poss = poss.where(poss.notna() & (poss != 0), hints)
-    poss = poss.groupby([df["game_id"], df["period"]]).ffill().bfill()
-    poss = poss.infer_objects(copy=False)
 
-    df["possession_after"] = poss
+    # Do not propagate possession onto period/timeout rows
+    live_mask = ~df["event_type_de"].isin(["period", "timeout"])
+
+    # Only fill within live events, grouped by game+period
+    poss_live = poss.where(live_mask)
+    poss_live = poss_live.groupby([df["game_id"], df["period"]]).ffill().bfill()
+
+    # Put live values back; keep period/timeout at whatever they had (usually NaN/0)
+    df["possession_after"] = poss.where(~live_mask, poss_live)
+    df["possession_after"] = df["possession_after"].infer_objects(copy=False)
     return df
 
 

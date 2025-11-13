@@ -243,38 +243,21 @@ def _points_made(family: str, shot_made: Optional[int]) -> int:
 
 def _score_tuple(action: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
     """
-    Extract (score_home, score_away) from a CDN action.
+    Return (score_home, score_away) for an action.
 
-    Newer liveData feeds expose flat `scoreHome` / `scoreAway` fields, while
-    older fixtures may use a nested `score` object. Support both.
+    New CDN payloads use top-level `scoreHome` / `scoreAway` fields (strings),
+    while older ones used a nested `score = {"home": ..., "away": ...}` dict.
+    Prefer the nested dict if present, otherwise fall back to the top-level keys.
     """
-    # Newer schema: flat fields
-    if "scoreHome" in action or "scoreAway" in action:
-        home_raw = action.get("scoreHome")
-        away_raw = action.get("scoreAway")
-        try:
-            home_val = int(home_raw) if home_raw not in (None, "") else None
-        except (TypeError, ValueError):
-            home_val = None
-        try:
-            away_val = int(away_raw) if away_raw not in (None, "") else None
-        except (TypeError, ValueError):
-            away_val = None
-        return home_val, away_val
-
-    # Older schema: nested object
-    score = action.get("score") or {}
-    home_val = score.get("home")
-    away_val = score.get("away")
-    try:
-        home_val = int(home_val) if home_val not in (None, "") else None
-    except (TypeError, ValueError):
-        home_val = None
-    try:
-        away_val = int(away_val) if away_val not in (None, "") else None
-    except (TypeError, ValueError):
-        away_val = None
-    return home_val, away_val
+    score = action.get("score")
+    if isinstance(score, dict):
+        home = score.get("home")
+        away = score.get("away")
+    else:
+        # New-style CDN: use scoreHome / scoreAway if present
+        home = action.get("scoreHome")
+        away = action.get("scoreAway")
+    return home, away
 
 
 def _team_meta(box_json: Dict[str, Any]) -> Tuple[int, str, int, str, str]:
@@ -429,9 +412,7 @@ def parse_actions_to_rows(
             "area": action.get("area"),
             "area_detail": action.get("areaDetail"),
             "assist_id": action.get("assistPersonId"),
-            # Newer CDN feeds put the blocker directly on the shot row.
-            # Sidecar "block" actions are still handled by _SidecarCollector when they
-            # carry a shotActionNumber, but this covers the common case where they do not.
+            # Newer CDN payloads often carry block info inline on the shot row
             "block_id": action.get("blockPersonId"),
             "steal_id": action.get("stealPersonId"),
             "style_flags": style_flags,
