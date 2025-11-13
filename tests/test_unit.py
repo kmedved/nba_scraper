@@ -157,6 +157,15 @@ def test_cdn_parser_populates_secondary_names_from_json():
     assert block_row["player3_name"] == "Paul Millsap"
 
 
+def test_cdn_scores_populated():
+    pbp = _load_json("cdn_playbyplay_0022400001.json")
+    box = _load_json("cdn_boxscore_0022400001.json")
+    df = cdn_parser.parse_actions_to_rows(pbp, box)
+    assert df["score_home"].notna().any()
+    assert df["score_away"].notna().any()
+    assert df["scoremargin"].str.len().max() > 0
+
+
 def test_cdn_synth_ft_description(monkeypatch):
     monkeypatch.setenv("NBA_SCRAPER_SYNTH_FT_DESC", "1")
     # Reload module to pick up environment variable change.
@@ -193,6 +202,19 @@ def test_lineups_have_five_players_every_live_row():
             .astype(int)
         )
         assert ((numeric > 0).sum(axis=1) == 5).all()
+
+
+def test_cdn_split_substitution_updates_lineups():
+    pbp = _load_json("cdn_playbyplay_0022400001.json")
+    box = _load_json("cdn_boxscore_0022400001.json")
+    df = io_sources.parse_any((pbp, box), io_sources.SourceKind.CDN_LOCAL)
+    df = lineup_builder.attach_lineups(df, box_json=box, pbp_json=pbp)
+
+    sub_in = df[(df["family"] == "substitution") & (df["player1_id"] == 1626204)].iloc[0]
+    idx = sub_in.name
+
+    home_ids = [df.loc[idx, f"home_player_{i}_id"] for i in range(1, 6)]
+    assert 1626204 in home_ids
 
 
 def test_team_fields_filled_on_team_events():

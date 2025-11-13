@@ -203,8 +203,8 @@ def attach_lineups(
 
     # For CDN-style substitutions we see separate "out" and "in" events.
     # Maintain simple FIFO queues of pending outs for each team.
-    pending_outs_home: List[int] = []
-    pending_outs_away: List[int] = []
+    pending_out_home: List[int] = []
+    pending_out_away: List[int] = []
 
     def _resolve_team_from_row(row: pd.Series) -> Optional[int]:
         for key in ("team_id", "player1_team_id", "player2_team_id", "player3_team_id"):
@@ -232,6 +232,12 @@ def attach_lineups(
             # Decide which team's queue to use.
             substitution_team = event_team_id
             if not substitution_team:
+                if _safe_int(row.get("player1_team_id")) == home_id:
+                    substitution_team = home_id
+                elif _safe_int(row.get("player1_team_id")) == away_id:
+                    substitution_team = away_id
+
+            if not substitution_team:
                 # Try to infer from current lineups (useful for older v2-style data).
                 if raw_player and raw_player in home_lineup:
                     substitution_team = home_id
@@ -239,15 +245,15 @@ def attach_lineups(
                     substitution_team = away_id
 
             if substitution_team and home_id and substitution_team == home_id:
-                queue = pending_outs_home
+                pending_out = pending_out_home
                 target = home_lineup
                 candidates = home_candidates
             elif substitution_team and away_id and substitution_team == away_id:
-                queue = pending_outs_away
+                pending_out = pending_out_away
                 target = away_lineup
                 candidates = away_candidates
             else:
-                queue = None
+                pending_out = None
                 target = None
                 candidates = None
 
@@ -256,13 +262,13 @@ def attach_lineups(
 
             if subfamily in {"out"}:
                 # CDN: "substitution" + subType "out" – only outgoing player present.
-                if queue is not None and raw_player:
-                    queue.append(raw_player)
+                if pending_out is not None and raw_player:
+                    pending_out.append(raw_player)
             elif subfamily in {"in"}:
                 # CDN: "substitution" + subType "in" – only incoming player present.
                 sub_in = raw_player
-                if queue is not None and queue:
-                    sub_out = queue.pop(0)
+                if pending_out is not None and pending_out:
+                    sub_out = pending_out.pop(0)
             else:
                 # v2-style: player1_id = out, player2_id = in on the same row.
                 sub_out = raw_player
