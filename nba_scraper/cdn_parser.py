@@ -242,8 +242,39 @@ def _points_made(family: str, shot_made: Optional[int]) -> int:
 
 
 def _score_tuple(action: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
+    """
+    Extract (score_home, score_away) from a CDN action.
+
+    Newer liveData feeds expose flat `scoreHome` / `scoreAway` fields, while
+    older fixtures may use a nested `score` object. Support both.
+    """
+    # Newer schema: flat fields
+    if "scoreHome" in action or "scoreAway" in action:
+        home_raw = action.get("scoreHome")
+        away_raw = action.get("scoreAway")
+        try:
+            home_val = int(home_raw) if home_raw not in (None, "") else None
+        except (TypeError, ValueError):
+            home_val = None
+        try:
+            away_val = int(away_raw) if away_raw not in (None, "") else None
+        except (TypeError, ValueError):
+            away_val = None
+        return home_val, away_val
+
+    # Older schema: nested object
     score = action.get("score") or {}
-    return score.get("home"), score.get("away")
+    home_val = score.get("home")
+    away_val = score.get("away")
+    try:
+        home_val = int(home_val) if home_val not in (None, "") else None
+    except (TypeError, ValueError):
+        home_val = None
+    try:
+        away_val = int(away_val) if away_val not in (None, "") else None
+    except (TypeError, ValueError):
+        away_val = None
+    return home_val, away_val
 
 
 def _team_meta(box_json: Dict[str, Any]) -> Tuple[int, str, int, str, str]:
@@ -398,13 +429,19 @@ def parse_actions_to_rows(
             "area": action.get("area"),
             "area_detail": action.get("areaDetail"),
             "assist_id": action.get("assistPersonId"),
-            "block_id": None,
+            # Newer CDN feeds put the blocker directly on the shot row.
+            # Sidecar "block" actions are still handled by _SidecarCollector when they
+            # carry a shotActionNumber, but this covers the common case where they do not.
+            "block_id": action.get("blockPersonId"),
             "steal_id": action.get("stealPersonId"),
             "style_flags": style_flags,
             "qualifiers": qualifiers_list,
             "is_o_rebound": 1 if family == "rebound" and subfamily == "offensive" else 0,
             "is_d_rebound": 1 if family == "rebound" and subfamily == "defensive" else 0,
-            "team_rebound": 1 if (action.get("personId") in (0, None)) else 0,
+            # Only mark team rebounds on actual rebound events with no playerId.
+            "team_rebound": 1
+            if (family == "rebound" and action.get("personId") in (0, None))
+            else 0,
             "linked_shot_action_number": action.get("shotActionNumber"),
             "possession_after": action.get("possession"),
             "score_home": score_home,
@@ -427,6 +464,22 @@ def parse_actions_to_rows(
             row["event_type_de"] = _EVENT_TYPE_DE.get(row["eventmsgtype"], "")
 
         sidecars.apply(action, row)
+
+        # Map the CDN `description` into home/visitor columns for compatibility
+        # with the v2-style schema. We don't attempt to fully parse who is home vs
+        # away here; we simply assign the description to the acting team.
+        desc = action.get("description") or ""
+        if desc:
+            if row.get("team_id") == home_id:
+                row["homedescription"] = desc
+                row["visitordescription"] = row.get("visitordescription", "")
+            elif row.get("team_id") == away_id:
+                row["visitordescription"] = desc
+                row["homedescription"] = row.get("homedescription", "")
+            else:
+                # Fallback: put neutral events (period, jumpball, etc.) on home side.
+                if not row.get("homedescription"):
+                    row["homedescription"] = desc
 
         row["assist_id"] = _int_or_zero(row.get("assist_id"))
         row["block_id"] = _int_or_zero(row.get("block_id"))
