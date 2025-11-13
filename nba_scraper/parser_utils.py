@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 
 _ABOVE: Dict[str, Tuple[float, float]] = {
@@ -77,93 +78,104 @@ def _synth_xy(area: str, area_detail: str, side: str) -> tuple[Optional[float], 
 
 
 def infer_possession_after(df: pd.DataFrame) -> pd.DataFrame:
-    """Fill in missing possession_after values between explicit anchors."""
+    """
+    Fill in possession_after so it reflects who has the ball *after* each event.
+
+    Heuristics:
+      - Turnover (eventmsgtype 5): flip to opponent(team_id).
+      - Made 2PT/3PT (family '2pt'/'3pt' and shot_made == 1): flip to opponent(team_id).
+      - Defensive rebound (family 'rebound' and is_d_rebound == 1): team_id.
+      - Last made FT of a trip (family 'freethrow', shot_made == 1, ft_n == ft_m): flip to opponent(team_id).
+      - Otherwise: fall back to the raw feed's possession value (possession_after).
+    Then we smoothly propagate within (game_id, period) over *live* events only
+    (we do not smear possession onto 'period' or 'timeout' rows).
+    """
 
     df = df.copy()
-    poss = df["possession_after"].copy()
 
-    def _next_possession(row: pd.Series) -> Optional[int]:
-        def _safe_int(value: Any) -> int:
-            if pd.isna(value):
-                return 0
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                return 0
+    def _safe_team(value: Any) -> int:
+        if pd.isna(value):
+            return 0
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
 
-        team_id = _safe_int(row.get("team_id"))
-        event_type = _safe_int(row.get("eventmsgtype"))
+    # Pre-compute home/away team IDs once per game (assumed constant).
+    home_team = _safe_team(df["home_team_id"].iloc[0] if "home_team_id" in df.columns else 0)
+    away_team = _safe_team(df["away_team_id"].iloc[0] if "away_team_id" in df.columns else 0)
+
+    def _opponent(team_id: int) -> int:
+        if team_id == 0 or home_team == 0 or away_team == 0:
+            return 0
+        return away_team if team_id == home_team else home_team
+
+    # Start from whatever is currently in possession_after (raw feed values for CDN).
+    poss_init = pd.to_numeric(df.get("possession_after"), errors="coerce").fillna(0).astype(int)
+
+    def _infer_row(row: pd.Series) -> int:
+        team_id = _safe_team(row.get("team_id"))
+        event_type = _safe_team(row.get("eventmsgtype"))
         family = row.get("family")
 
-        home_team = _safe_int(row.get("home_team_id"))
-        away_team = _safe_int(row.get("away_team_id"))
+        shot_made = _safe_team(row.get("shot_made"))
+        ft_n_val = _safe_team(row.get("ft_n"))
+        ft_m_val = _safe_team(row.get("ft_m"))
+        is_d_reb = _safe_team(row.get("is_d_rebound"))
 
-        def _opponent(tid: int) -> Optional[int]:
-            if tid == 0 or home_team == 0 or away_team == 0:
-                return None
-            return away_team if tid == home_team else home_team
+        # 1) Heuristic "hint" based on the event itself.
+        hint = 0
 
-        shot_made = _safe_int(row.get("shot_made"))
-        ft_n_val = _safe_int(row.get("ft_n"))
-        ft_m_val = _safe_int(row.get("ft_m"))
-
-        # 1) First, try to infer from the event itself.
-        hint: Optional[int] = None
-
-        # Turnover: ball goes to the opponent.
+        # Turnover -> opponent.
         if event_type == 5:  # turnover
-            opp = _opponent(team_id)
-            if opp:
-                hint = opp
+            hint = _opponent(team_id)
 
-        # Made field goal: ball goes to the opponent.
+        # Made 2PT / 3PT -> opponent.
         elif family in {"2pt", "3pt"} and shot_made == 1:
-            opp = _opponent(team_id)
-            if opp:
-                hint = opp
+            hint = _opponent(team_id)
 
-        # Defensive rebound: rebounder takes possession.
-        elif family == "rebound" and _safe_int(row.get("is_d_rebound")) == 1:
-            hint = team_id or None
+        # Defensive rebound -> rebounder's team.
+        elif family == "rebound" and is_d_reb == 1:
+            hint = team_id
 
-        # Last made FT of a trip: ball goes to the opponent.
+        # Last made FT in a trip -> opponent.
         elif (
             family == "freethrow"
-            and ft_n_val
-            and ft_m_val
+            and ft_n_val != 0
+            and ft_m_val != 0
             and ft_n_val == ft_m_val
             and shot_made == 1
         ):
-            opp = _opponent(team_id)
-            if opp:
-                hint = opp
+            hint = _opponent(team_id)
 
         if hint:
             return int(hint)
 
-        # 2) If we couldn't infer, fall back to the raw possession field.
-        poss_val = row.get("possession_after")
-        if pd.notna(poss_val) and poss_val not in ("", 0):
+        # 2) Fall back to raw possession_after value if present.
+        raw_val = row.get("possession_after")
+        if pd.notna(raw_val) and raw_val not in ("", 0):
             try:
-                return int(poss_val)
+                return int(raw_val)
             except (TypeError, ValueError):
-                return None
+                return 0
 
-        return None
+        return 0
 
-    hints = df.apply(_next_possession, axis=1)
-    poss = poss.where(poss.notna() & (poss != 0), hints)
+    hints = df.apply(_infer_row, axis=1)
+    # Use hint when non-zero; otherwise keep the initial value.
+    poss_new = pd.Series(
+        np.where(hints != 0, hints.to_numpy(), poss_init.to_numpy()),
+        index=df.index,
+        dtype="Int64",
+    )
 
-    # Do not propagate possession onto period/timeout rows
+    # Do not propagate onto period/timeout rows.
     live_mask = ~df["event_type_de"].isin(["period", "timeout"])
 
-    # Only fill within live events, grouped by game+period
-    poss_live = poss.where(live_mask)
+    poss_live = poss_new.where(live_mask)
     poss_live = poss_live.groupby([df["game_id"], df["period"]]).ffill().bfill()
 
-    # Put live values back; keep period/timeout at whatever they had (usually NaN/0)
-    df["possession_after"] = poss.where(~live_mask, poss_live)
-    df["possession_after"] = df["possession_after"].infer_objects(copy=False)
+    df["possession_after"] = poss_new.where(~live_mask, poss_live)
     return df
 
 
