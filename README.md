@@ -1,17 +1,18 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Maintenance](https://img.shields.io/maintenance/no/2021)](https://github.com/mcbarlowe/nba_scraper/commits/master)
+[![Maintenance](https://img.shields.io/maintenance/yes/2024)](https://github.com/mcbarlowe/nba_scraper/commits/master)
 [![PyPI version](https://badge.fury.io/py/nba-scraper.svg)](https://badge.fury.io/py/nba-scraper)
 [![Downloads](https://pepy.tech/badge/nba-scraper)](https://pepy.tech/project/nba-scraper)
 [![Build Status](https://travis-ci.org/mcbarlowe/nba_scraper.svg?branch=master)](https://travis-ci.org/mcbarlowe/nba_scraper)
 [![codecov](https://codecov.io/gh/mcbarlowe/nba_scraper/branch/master/graph/badge.svg)](https://codecov.io/gh/mcbarlowe/nba_scraper)
 
-# This package is no longer maintained as of 2021/01/30. Any outstanding issues or new ones will not be fixed
+# This project is actively maintained and now supports both legacy v2 and CDN (live data) endpoints out of the box.
 # `nba_scraper`
 
-This is a package written in Python to scrape the NBA's api and produce the
-play by play of games either in a `csv` file or a `pandas` dataframe. This package
-has two main functions `scrape_game` which scrapes an individual game or a list
-of specific games, and `scrape_season` which scrapes an entire season of regular
+This is a package written in Python to scrape the NBA's official API (legacy v2
+JSON archives and the modern CDN live data feeds) and produce the play by play
+of games either in a `csv` file or a `pandas` dataframe. This package has two
+main functions `scrape_game` which scrapes an individual game or a list of
+specific games, and `scrape_season` which scrapes an entire season of regular
 season games.
 
 The scraper now supports both the modern NBA CDN live data feeds (2019 and later)
@@ -99,61 +100,138 @@ extra:
 
 # Usage
 
-## `scrape_game`
+`nba_scraper` exposes two levels of APIs:
 
-The default data format is a pandas dataframe you can change this to csv
-with the `data_format` parameter. The default file path is the
-users home directory you can change this with the `data_dir` parameter
+* `nba_scraper.nba_scraper` – friendly, batteries-included helpers for the
+  most common flows (`scrape_game`, `scrape_season`, `scrape_date_range`, etc.).
+* `nba_scraper.io_sources.parse_any` – a low-level router you can use to point at
+  CDN endpoints, cached JSON fixtures or already-in-memory dictionaries.
 
-    import nba_scraper.nba_scraper as ns
+The sections below walk through both layers in a step-by-step fashion.
 
-    # if you want to return a dataframe
-    # you can pass the function a list of strings or integers
-    # all nba game ids have two leading zeros but you can omit these
-    # to make it easier to create lists of game ids as I add them on
-    nba_df = ns.scrape_game([21800001, 21800002])
+## Step 1 – Install and import
 
-    # if you want a csv if you don't pass a file path the default is home
-    # directory
-    ns.scrape_game([21800001, 21800002], data_format='csv', data_dir='file/path')
+```python
+import nba_scraper.nba_scraper as ns
+from nba_scraper import io_sources
+```
 
-## `scrape_from_files`
+## Step 2 – Choose a data source
 
-Local CDN JSON pairs or legacy v2 JSON dumps can be parsed directly:
+The scraper automatically normalises CDN and legacy v2 feeds to the same schema.
+Pick the source that best matches your workflow:
 
-    ns.scrape_from_files('playbyplay.json', 'boxscore.json', kind='cdn_local')
-    ns.scrape_from_files('0021700001.json', kind='v2_local')
+| Scenario | Call | Notes |
+| --- | --- | --- |
+| Live or recently completed games via the official CDN API | `ns.scrape_game([...])` (default) or `io_sources.parse_any("0022400001", io_sources.SourceKind.CDN_REMOTE)` | Requires internet access. Automatically requests play-by-play, box score and (optionally) shot charts. |
+| Downloaded CDN JSON fixtures | `ns.scrape_from_files(pbp_path, box_path, kind="cdn_local")` | Expects a pair of files – one `*playbyplay*.json` and one `*boxscore*.json`. |
+| Archived legacy v2 JSON files | `ns.scrape_from_files(v2_path, kind="v2_local")` or `io_sources.parse_any(v2_path, io_sources.SourceKind.V2_LOCAL)` | Useful for historical games prior to the CDN feeds. |
+| Already-loaded dictionaries | `io_sources.parse_any(payload_dict, io_sources.SourceKind.V2_DICT)` | Skips disk I/O if you have the JSON loaded elsewhere. |
 
-## `scrape_season`
+When hitting the CDN endpoints directly you can pass full 10-digit game IDs
+(`0022400001`) or the shortened form without leading zeros (`22400001`). The
+helper automatically pads and validates the identifiers.
 
-The `data_format` and `data_dir` key words are used the excat same way as
-`scrape_game`. Instead of game ids though, you would pass the season you want
-scraped to the function. This season is a four digit year that must be an
-integer.
+## Step 3 – Run your first scrape
 
-    import nba_scraper.nba_scraper as ns
+### `scrape_game`
 
-    #scrape a season
-    nba_df = ns.scrape_season(2019)
+Use `scrape_game` when you have one or more specific game IDs. Important
+parameters:
 
-    # if you want a csv if you don't pass a file path the default is home
-    # directory
-    ns.scrape_season(2019, data_format='csv', data_dir='file/path')
+* `game_ids` – list of strings/ints. Leading zeros are optional.
+* `data_format` – `'dataframe'` (default) returns a `pandas.DataFrame`; `'csv'`
+  saves a CSV to disk.
+* `data_dir` – directory for CSV output. Defaults to your home directory.
 
-## `scrape_date_range`
+```python
+# returns a pandas.DataFrame
+nba_df = ns.scrape_game([21800001, 21800002])
 
-This allows you to scrape all **regular season** games in the date range passed to
-the function. As of right now it will not scrape playoff games. Date format must
-be passed in the format `YYYY-MM-DD`.
+# writes CSVs into the provided folder
+ns.scrape_game([21800001, 21800002], data_format="csv", data_dir="/tmp/pbp")
+```
 
-    import nba_scraper.nba_scraper as ns
+Each scrape fetches the CDN play-by-play, box score and (if
+`NBA_SCRAPER_BACKFILL_COORDS=1` is set) the shot chart in order to add spatial
+coordinates for shot attempts.
 
-    #scrape a season
-    nba_df = ns.scrape_date_range('2019-01-01', 2019-01-03')
+### `scrape_from_files`
 
-    # if you want a csv if you don't pass a file path the default is home
-    # directory
-    ns.scrape_date_range('2019-01-01', 2019-01-03', data_format='csv', data_dir='file/path')
+Use local files when you are working offline or wish to unit test against frozen
+fixtures.
+
+```python
+# CDN fixtures: pass both play-by-play and box score
+ns.scrape_from_files("playbyplay_0022400001.json", "boxscore_0022400001.json", kind="cdn_local")
+
+# Legacy v2 dump: only one JSON file is required
+ns.scrape_from_files("0021700001.json", kind="v2_local")
+```
+
+Under the hood the helper routes to `io_sources.parse_any`, so you can also call
+that function directly when you need more control.
+
+### `scrape_season`
+
+Scrape every regular-season game for a specific season (four-digit year). The
+`data_format` and `data_dir` arguments mirror `scrape_game`.
+
+```python
+# Build a dataframe that contains the entire 2019 season
+nba_df = ns.scrape_season(2019)
+
+# Persist CSV exports instead of keeping everything in memory
+ns.scrape_season(2019, data_format="csv", data_dir="/tmp/nba-2019")
+```
+
+### `scrape_date_range`
+
+Capture all **regular-season** games between two dates (inclusive). Dates must
+be strings formatted as `YYYY-MM-DD`.
+
+```python
+nba_df = ns.scrape_date_range("2019-01-01", "2019-01-03")
+
+ns.scrape_date_range(
+    "2019-01-01",
+    "2019-01-03",
+    data_format="csv",
+    data_dir="/tmp/nba-jan"
+)
+```
+
+## Step 4 – Configure advanced options
+
+* **Output control** – The default return type is a dataframe. Pass
+  `data_format="csv"` to materialise files. Use `data_dir` to change where CSVs
+  are written.
+* **Lineup enrichment** – Lineups are automatically attached by default. If you
+  only need raw events, call `io_sources.parse_any(..., mapping_yaml_path=None)`
+  and skip `lineup_builder.attach_lineups` in your own workflow.
+* **Event remapping** – Set the `NBA_SCRAPER_MAP` environment variable to point
+  to a YAML file derived from `mapping_template.yml`. This lets you override
+  turnover/foul/violation sub-types without editing code.
+* **Shot coordinate backfill** – Export shot coordinates for every attempt by
+  setting `NBA_SCRAPER_BACKFILL_COORDS=1`. The parser will fetch or load the
+  matching shot chart and merge the coordinates into the returned dataframe.
+* **Synthetic free-throw descriptions** – Legacy consumers can set
+  `NBA_SCRAPER_SYNTH_FT_DESC=1` to emit “Free Throw N of M” text in the
+  `homedescription` / `visitordescription` columns.
+
+## Step 5 – Work with the canonical dataframe
+
+The dataframe returned by any of the helpers is ready to feed into
+[`nba_parser.PbP`](https://pypi.org/project/nba-parser/), a SQL warehouse or your
+own analytics stack. Every row includes:
+
+* A stable `eventnum` and `pctimestring`.
+* Actor IDs plus the derived `event_team` and descriptive `event_type_de`.
+* Lineup context (`home_player_1`…`home_player_5`, etc.) and score state.
+* Structured flags for possessions, steals, blocks and free-throw trip counts.
+
+Because CDN and v2 sources both map onto the same schema you can mix seasons and
+data sources without any post-processing.
 
 # Contact
 
