@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+* Documented that Kostya Medvedovsky (@kmedved, creator of DARKO) now maintains `nba_scraper` and thanked Matthew Barlowe for creating the project.
+
 ## 1.2.2
 
 * Normalised `game_date` from both CDN and v2 parsers to a consistent `YYYY-MM-DD` string.

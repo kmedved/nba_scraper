@@ -6,6 +6,8 @@
 [![codecov](https://codecov.io/gh/mcbarlowe/nba_scraper/branch/master/graph/badge.svg)](https://codecov.io/gh/mcbarlowe/nba_scraper)
 
 # This project is actively maintained and now supports both legacy v2 and CDN (live data) endpoints out of the box.
+
+> Maintained by Kostya Medvedovsky (@kmedved on Twitter, creator of DARKO). Immense thanks to Matthew Barlowe for building and sharing the original release of `nba_scraper`.
 # `nba_scraper`
 
 This is a package written in Python to scrape the NBA's official API (legacy v2
@@ -233,12 +235,13 @@ own analytics stack. Every row includes:
 Because CDN and v2 sources both map onto the same schema you can mix seasons and
 data sources without any post-processing.
 
-# Contact
+# Maintainer & contact
+
+`nba_scraper` was founded by Matthew Barlowe, and the project will always be grateful for the groundwork he laid. Day-to-day maintenance now happens under Kostya Medvedovsky (@kmedved on Twitter, creator of DARKO).
 
 If you have any troubles or bugs please **open an issue/bug report**. If you have
-any improvements/suggestions please **submit a pull request**. If it falls outside
-those two areas please feel free to email me at
-[matt@barloweanalytics.com](mailto:matt@barloweanalytics.com).
+any improvements/suggestions please **submit a pull request**. For anything that
+doesn't fit those buckets, please reach out to Kostya via GitHub issues or Twitter DMs (@kmedved).
 
 
 
