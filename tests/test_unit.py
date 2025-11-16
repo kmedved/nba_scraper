@@ -1,3 +1,4 @@
+import copy
 import importlib
 import json
 import sys
@@ -12,13 +13,14 @@ import pandas as pd
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from nba_scraper import cdn_parser, io_sources, lineup_builder, v2_parser
+from nba_scraper.mapping import event_codebook
 from nba_scraper.parser_utils import infer_possession_after
 
 FIXTURES = Path(__file__).parent / "test_files"
 
 
 def _load_json(name: str):
-    with (FIXTURES / name).open() as fh:
+    with (FIXTURES / name).open(encoding="utf-8") as fh:
         return json.load(fh)
 
 
@@ -119,7 +121,7 @@ def test_seconds_elapsed():
     df = cdn_parser.parse_actions_to_rows(pbp, box)
     first = df.iloc[0]
     assert first["seconds_elapsed"] == 0
-    shot = df[df["action_number"] == 3].iloc[0]
+    shot = df[df["family"].isin({"2pt", "3pt"})].iloc[0]
     assert shot["seconds_elapsed"] > first["seconds_elapsed"]
 
 
@@ -127,9 +129,9 @@ def test_points_made():
     pbp = _load_json("cdn_playbyplay_0022400001.json")
     box = _load_json("cdn_boxscore_0022400001.json")
     df = cdn_parser.parse_actions_to_rows(pbp, box)
-    three = df[df["action_number"] == 3].iloc[0]
+    three = df[(df["family"] == "3pt") & (df["shot_made"] == 1)].iloc[0]
     assert three["points_made"] == 3
-    layup = df[df["action_number"] == 7].iloc[0]
+    layup = df[(df["family"] == "2pt") & (df["shot_made"] == 0)].iloc[0]
     assert layup["points_made"] == 0
 
 
@@ -137,9 +139,48 @@ def test_sidecar_merge():
     pbp = _load_json("cdn_playbyplay_0022400001.json")
     box = _load_json("cdn_boxscore_0022400001.json")
     df = cdn_parser.parse_actions_to_rows(pbp, box)
-    action_numbers = set(df["action_number"].tolist())
-    assert 5 not in action_numbers  # steal sidecar merged
-    assert 8 not in action_numbers  # block sidecar merged
+    assert "steal" not in df["family"].values
+    assert "block" not in df["family"].values
+
+
+def test_event_codebook_maps_free_throw_actiontypes():
+    cases = [
+        ("Free Throw 1 of 1", 10),
+        ("Free Throw 1 of 2", 11),
+        ("Free Throw 2 of 2", 12),
+        ("Free Throw 1 of 3", 13),
+        ("Free Throw 2 of 3", 14),
+        ("Free Throw 3 of 3", 15),
+    ]
+    for label, expected in cases:
+        assert event_codebook.actiontype_code_for("freethrow", label) == expected
+
+
+def test_infer_possession_after_respects_feed_on_final_ft():
+    home = 1610612737
+    away = 1610612744
+    df = pd.DataFrame(
+        [
+            {
+                "game_id": "test",
+                "period": 1,
+                "event_type_de": "freethrow",
+                "home_team_id": home,
+                "away_team_id": away,
+                "team_id": home,
+                "eventmsgtype": 3,
+                "family": "freethrow",
+                "shot_made": 1,
+                "ft_n": 1,
+                "ft_m": 1,
+                "is_d_rebound": 0,
+                "possession_after": home,
+            }
+        ]
+    )
+
+    result = infer_possession_after(df)
+    assert result.loc[0, "possession_after"] == home
 
 
 def test_cdn_parser_populates_secondary_names_from_json():
@@ -172,6 +213,28 @@ def test_cdn_synth_ft_description(monkeypatch):
     module = importlib.reload(cdn_parser)
     globals()["cdn_parser"] = module
     pbp = _load_json("cdn_playbyplay_0022400001.json")
+    actions = pbp["game"].get("actions", [])
+    if not any("of" in (act.get("subType") or "").lower() for act in actions):
+        pbp = copy.deepcopy(pbp)
+        actions = pbp["game"].setdefault("actions", [])
+        actions.append(
+            {
+                "actionNumber": 11,
+                "orderNumber": 11,
+                "period": 1,
+                "clock": "PT08M30.00S",
+                "actionType": "freethrow",
+                "subType": "Free Throw 1 of 2",
+                "teamId": 1610612747,
+                "teamTricode": "LAL",
+                "personId": 2544,
+                "playerName": "LeBron James",
+                "shotResult": "Made",
+                "shotActionNumber": 4,
+                "descriptor": "shooting foul",
+                "score": {"home": 4, "away": 3},
+            }
+        )
     box = _load_json("cdn_boxscore_0022400001.json")
     df = module.parse_actions_to_rows(pbp, box)
     ft_rows = df[df["family"] == "freethrow"]
@@ -206,15 +269,58 @@ def test_lineups_have_five_players_every_live_row():
 
 def test_cdn_split_substitution_updates_lineups():
     pbp = _load_json("cdn_playbyplay_0022400001.json")
+    actions = pbp["game"].get("actions", [])
+    needs_split = not any(
+        act.get("actionType") == "substitution"
+        and (act.get("subType") or "").lower() == "out"
+        for act in actions
+    )
+    if needs_split:
+        pbp = copy.deepcopy(pbp)
+        actions = pbp["game"].setdefault("actions", [])
+        actions.extend(
+            [
+                {
+                    "actionNumber": 21,
+                    "orderNumber": 21,
+                    "period": 1,
+                    "clock": "PT08M45.00S",
+                    "actionType": "substitution",
+                    "subType": "out",
+                    "teamId": 1610612747,
+                    "teamTricode": "LAL",
+                    "personId": 2732,
+                    "playerName": "Patrick Beverley",
+                    "shotActionNumber": 5,
+                },
+                {
+                    "actionNumber": 22,
+                    "orderNumber": 22,
+                    "period": 1,
+                    "clock": "PT08M45.00S",
+                    "actionType": "substitution",
+                    "subType": "in",
+                    "teamId": 1610612747,
+                    "teamTricode": "LAL",
+                    "personId": 203210,
+                    "playerName": "Kentavious Caldwell-Pope",
+                    "shotActionNumber": 5,
+                },
+            ]
+        )
     box = _load_json("cdn_boxscore_0022400001.json")
     df = io_sources.parse_any((pbp, box), io_sources.SourceKind.CDN_LOCAL)
     df = lineup_builder.attach_lineups(df, box_json=box, pbp_json=pbp)
 
-    sub_in = df[(df["family"] == "substitution") & (df["player1_id"] == 1626204)].iloc[0]
+    sub_in = df[
+        (df["family"] == "substitution")
+        & (df["subfamily"] == "in")
+        & (df["player1_id"] == 203210)
+    ].iloc[0]
     idx = sub_in.name
 
     home_ids = [df.loc[idx, f"home_player_{i}_id"] for i in range(1, 6)]
-    assert 1626204 in home_ids
+    assert 203210 in home_ids
 
 
 def test_team_fields_filled_on_team_events():

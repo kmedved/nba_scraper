@@ -145,6 +145,49 @@ def _seed_lineup(starters: List[int]) -> List[Optional[int]]:
     return lineup
 
 
+def _apply_substitution(
+    lineup: List[Optional[int]],
+    sub_out: Optional[int],
+    sub_in: Optional[int],
+) -> None:
+    """Apply a substitution to the running lineup in-place."""
+    if not lineup:
+        return
+
+    sub_out = sub_out or None
+    sub_in = sub_in or None
+
+    if not sub_out and not sub_in:
+        return
+
+    if sub_in and sub_in in lineup:
+        if sub_out and sub_out in lineup and sub_out != sub_in:
+            idx_out = lineup.index(sub_out)
+            lineup[idx_out] = None
+        return
+
+    if sub_out and sub_in:
+        if sub_out in lineup:
+            idx = lineup.index(sub_out)
+            lineup[idx] = sub_in
+        else:
+            lineup[0] = sub_in
+        return
+
+    if sub_out and not sub_in:
+        if sub_out in lineup:
+            idx = lineup.index(sub_out)
+            lineup[idx] = None
+        return
+
+    if sub_in and sub_in not in lineup:
+        for idx, pid in enumerate(lineup):
+            if pid is None:
+                lineup[idx] = sub_in
+                return
+        lineup[0] = sub_in
+
+
 def attach_lineups(
     df: pd.DataFrame,
     starters: Optional[Dict[str, List[int]]] = None,
@@ -279,12 +322,7 @@ def attach_lineups(
                 if sub_in and candidates is not None and sub_in not in candidates:
                     candidates.append(sub_in)
 
-                # Apply the substitution to the current lineup.
-                if sub_out and sub_out in target:
-                    idx = target.index(sub_out)
-                    target[idx] = sub_in or target[idx]
-                elif sub_in and sub_in not in target:
-                    _update_with_player(target, sub_in)
+                _apply_substitution(target, sub_out, sub_in)
 
         home_history.append(_copy_lineup(home_lineup))
         away_history.append(_copy_lineup(away_lineup))
