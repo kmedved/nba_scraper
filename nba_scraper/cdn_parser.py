@@ -386,6 +386,17 @@ def parse_actions_to_rows(
 
         qualifiers_list = _qualifiers_list(action)
 
+        # Drop 'startperiod' on the opening jump ball so the qualifier is
+        # reserved for the explicit period-start action, matching legacy v2
+        # semantics.
+        if (
+            family == "jumpball"
+            and action.get("period") == 1
+            and secs == 0
+            and "startperiod" in qualifiers_list
+        ):
+            qualifiers_list = [q for q in qualifiers_list if q != "startperiod"]
+
         sig_key = (
             canon_str(family),
             canon_str(subfamily),

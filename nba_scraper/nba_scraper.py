@@ -31,7 +31,7 @@ def _concat_or_write(frames: Sequence[pd.DataFrame], data_format: str, data_dir:
         return df
     Path(data_dir).expanduser().mkdir(parents=True, exist_ok=True)
     output_path = Path(data_dir) / "nba_pbp.csv"
-    df.to_csv(output_path, index=False)
+    df.to_csv(output_path, index=False, encoding="utf-8")
     return None
 
 

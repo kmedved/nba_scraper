@@ -138,7 +138,8 @@ def infer_possession_after(df: pd.DataFrame) -> pd.DataFrame:
         elif family == "rebound" and is_d_reb == 1:
             hint = team_id
 
-        # Last made FT in a trip -> opponent.
+        # Last made FT in a trip -> opponent, unless the raw feed already
+        # provided a possession hint (e.g., technical FT where offense keeps).
         elif (
             family == "freethrow"
             and ft_n_val != 0
@@ -146,7 +147,9 @@ def infer_possession_after(df: pd.DataFrame) -> pd.DataFrame:
             and ft_n_val == ft_m_val
             and shot_made == 1
         ):
-            hint = _opponent(team_id)
+            raw_val = row.get("possession_after")
+            if pd.isna(raw_val) or raw_val in ("", 0):
+                hint = _opponent(team_id)
 
         if hint:
             return int(hint)
