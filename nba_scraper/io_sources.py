@@ -146,7 +146,10 @@ def parse_any(
             box_json = cdn_client.fetch_box(game_ref)
         except Exception:
             box_json = None
-        df = cdn_parser.parse_actions_to_rows(pbp_json, box_json or {}, mapping_yaml_path)
+        meta_json_for_parser = box_json or pbp_json
+        df = cdn_parser.parse_actions_to_rows(
+            pbp_json, meta_json_for_parser or {}, mapping_yaml_path
+        )
         if _BACKFILL_COORDS:
             shotchart_df = _fetch_shotchart_df(game_ref)
             if shotchart_df is not None:

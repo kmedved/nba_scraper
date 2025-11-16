@@ -17,7 +17,6 @@ setup(
     download_url="https://github.com/mcbarlowe/nba_scraper/archive/v1.2.2.tar.gz",
     keywords=["basketball", "NBA", "scraper"],
     install_requires=["requests", "pandas", "numpy", "pyyaml"],
-    extras_require={"rapm": ["scikit-learn>=1.2,<2.0"]},
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Science/Research",
