@@ -11,8 +11,10 @@ import pandas as pd
 
 from . import cdn_client, cdn_parser, lineup_builder, v2_parser
 from .coords_backfill import backfill_coords_with_shotchart
+from .boxscore_validation import log_team_boxscore_mismatches
 
 _BACKFILL_COORDS = os.getenv("NBA_SCRAPER_BACKFILL_COORDS", "0") == "1"
+_VALIDATE_BOX = os.getenv("NBA_SCRAPER_VALIDATE_BOX", "0") == "1"
 
 
 class SourceKind(str, Enum):
@@ -148,15 +150,21 @@ def parse_any(
             box_json = None
         meta_json_for_parser = box_json or pbp_json
         df = cdn_parser.parse_actions_to_rows(
-            pbp_json, meta_json_for_parser or {}, mapping_yaml_path
+            pbp_json,
+            meta_json_for_parser or {},
+            mapping_yaml_path,
         )
         if _BACKFILL_COORDS:
             shotchart_df = _fetch_shotchart_df(game_ref)
             if shotchart_df is not None:
                 df = backfill_coords_with_shotchart(df, shotchart_df)
-        return lineup_builder.attach_lineups(
+        df = lineup_builder.attach_lineups(
             df, box_json=box_json, pbp_json=pbp_json
         )
+        if _VALIDATE_BOX and box_json is not None:
+            # Log any core-stat mismatches between PbP-derived totals and boxscore.
+            log_team_boxscore_mismatches(df, box_json)
+        return df
 
     if kind == SourceKind.CDN_LOCAL:
         if not isinstance(game_ref, (tuple, list)) or len(game_ref) != 2:
@@ -179,9 +187,13 @@ def parse_any(
             shotchart_df = _load_local_shotchart((pbp_ref, box_ref))
             if shotchart_df is not None:
                 df = backfill_coords_with_shotchart(df, shotchart_df)
-        return lineup_builder.attach_lineups(
+        df = lineup_builder.attach_lineups(
             df, box_json=box_json, pbp_json=pbp_json
         )
+        if _VALIDATE_BOX and box_json is not None:
+            # Log any core-stat mismatches between PbP-derived totals and boxscore.
+            log_team_boxscore_mismatches(df, box_json)
+        return df
 
     if kind == SourceKind.V2_LOCAL:
         if not isinstance(game_ref, (str, Path)):
