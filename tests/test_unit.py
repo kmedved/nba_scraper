@@ -13,7 +13,7 @@ import pandas as pd
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from nba_scraper import cdn_parser, io_sources, lineup_builder, v2_parser
-from nba_scraper.mapping import event_codebook
+from nba_scraper.mapping import event_codebook, normalize_descriptor
 from nba_scraper.parser_utils import infer_possession_after
 
 FIXTURES = Path(__file__).parent / "test_files"
@@ -22,6 +22,34 @@ FIXTURES = Path(__file__).parent / "test_files"
 def _load_json(name: str):
     with (FIXTURES / name).open(encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def _build_lineup_df(rows, *, home_id=1, away_id=2):
+    base = {
+        "game_id": "test_game",
+        "period": 1,
+        "seconds_elapsed": 0,
+        "family": "other",
+        "subfamily": "",
+        "player1_id": None,
+        "player2_id": None,
+        "player3_id": None,
+        "player1_team_id": home_id,
+        "team_id": home_id,
+        "event_type_de": "live",
+        "home_team_id": home_id,
+        "away_team_id": away_id,
+        "player1_name": "",
+        "player2_name": "",
+        "player3_name": "",
+    }
+    data = []
+    for idx, row in enumerate(rows, start=1):
+        record = base.copy()
+        record["eventnum"] = idx
+        record.update(row)
+        data.append(record)
+    return pd.DataFrame(data)
 
 
 def test_cdn_parse_basic():
@@ -388,6 +416,19 @@ def test_cdn_synth_ft_description(monkeypatch):
     globals()["cdn_parser"] = module
 
 
+def test_descriptor_normalization_extracts_core_and_styles():
+    core, styles = normalize_descriptor("Driving Floating Bank Layup")
+    assert core == "layup"
+    assert set(styles) == {"driving", "floating", "bank"}
+
+
+def test_descriptor_normalization_handles_alley_oop_variants():
+    for variant in ("Alley Oop Dunk", "alley-oop dunk"):
+        core, styles = normalize_descriptor(variant)
+        assert core == "dunk"
+        assert styles == ["alleyoop"]
+
+
 def test_lineups_have_five_players_every_live_row():
     pbp = _load_json("cdn_playbyplay_0022400001.json")
     box = _load_json("cdn_boxscore_0022400001.json")
@@ -404,6 +445,19 @@ def test_lineups_have_five_players_every_live_row():
             .astype(int)
         )
         assert ((numeric > 0).sum(axis=1) == 5).all()
+
+
+def test_lineups_have_five_unique_players():
+    pbp = _load_json("cdn_playbyplay_0022400001.json")
+    box = _load_json("cdn_boxscore_0022400001.json")
+    df = io_sources.parse_any((pbp, box), io_sources.SourceKind.CDN_LOCAL)
+    df = lineup_builder.attach_lineups(df, box_json=box, pbp_json=pbp)
+
+    live = ~df["event_type_de"].isin(["period", "timeout"])
+    for side in ("home", "away"):
+        cols = [f"{side}_player_{i}_id" for i in range(1, 6)]
+        lineups = df.loc[live, cols].astype(int)
+        assert lineups.apply(lambda r: len(set(r)) == 5, axis=1).all()
 
 
 def test_cdn_split_substitution_updates_lineups():
@@ -563,6 +617,80 @@ def test_lineup_builder_substitution_uses_player1_team_id_when_team_missing():
     assert result.loc[1, "home_player_1_id"] == 2002
 
 
+def test_lineup_builder_handles_batched_substitutions_single_tick():
+    starters = {"home": [1, 2, 3, 4, 5], "away": [101, 102, 103, 104, 105]}
+    rows = [
+        {"family": "jump-ball", "seconds_elapsed": 0},
+        *[
+            {
+                "family": "substitution",
+                "subfamily": "out",
+                "seconds_elapsed": 30,
+                "player1_id": pid,
+            }
+            for pid in (1, 2, 3)
+        ],
+        *[
+            {
+                "family": "substitution",
+                "subfamily": "in",
+                "seconds_elapsed": 30,
+                "player1_id": pid,
+            }
+            for pid in (6, 7, 8)
+        ],
+    ]
+    df = _build_lineup_df(rows)
+    result = lineup_builder.attach_lineups(df, starters=starters)
+
+    final = [int(result.iloc[-1][f"home_player_{i}_id"]) for i in range(1, 6)]
+    assert set(final) == {4, 5, 6, 7, 8}
+
+
+def test_lineup_builder_fills_orphan_sub_in_into_empty_slot():
+    rows = [
+        {"family": "rebound", "player1_id": pid}
+        for pid in (1, 2, 3, 4)
+    ]
+    rows.append(
+        {
+            "family": "substitution",
+            "subfamily": "in",
+            "player1_id": 5,
+        }
+    )
+    df = _build_lineup_df(rows)
+    result = lineup_builder.attach_lineups(df)
+
+    last = [int(result.iloc[-1][f"home_player_{i}_id"]) for i in range(1, 6)]
+    assert set(last) == {1, 2, 3, 4, 5}
+
+
+def test_lineup_builder_uses_player1_team_when_team_id_zero():
+    starters = {"home": [1, 2, 3, 4, 5], "away": [101, 102, 103, 104, 105]}
+    rows = [
+        {"family": "rebound", "player1_id": 1},
+        {
+            "family": "substitution",
+            "subfamily": "out",
+            "player1_id": 1,
+            "team_id": 0,
+        },
+        {
+            "family": "substitution",
+            "subfamily": "in",
+            "player1_id": 6,
+            "team_id": 0,
+        },
+    ]
+    df = _build_lineup_df(rows)
+    result = lineup_builder.attach_lineups(df, starters=starters)
+
+    last = [int(result.iloc[-1][f"home_player_{i}_id"]) for i in range(1, 6)]
+    assert 6 in last
+    assert 1 not in last
+
+
 def test_possession_after_filled_between_anchors():
     pbp = _load_json("cdn_playbyplay_0022400001.json")
     box = _load_json("cdn_boxscore_0022400001.json")
@@ -581,3 +709,58 @@ def test_possession_after_filled_between_anchors():
             continue
         checks.append(live_vals.iloc[1:].all())
     assert all(checks)
+
+
+def test_possession_inference_handles_mixed_sequence():
+    home = 100
+    away = 200
+    rows = [
+        {
+            "family": "2pt",
+            "team_id": home,
+            "shot_made": 1,
+        },
+        {
+            "family": "rebound",
+            "team_id": away,
+            "is_d_rebound": 1,
+        },
+        {
+            "family": "turnover",
+            "eventmsgtype": 5,
+            "team_id": away,
+        },
+        {
+            "family": "3pt",
+            "team_id": home,
+            "shot_made": 1,
+        },
+        {
+            "family": "freethrow",
+            "team_id": home,
+            "shot_made": 1,
+            "ft_n": 1,
+            "ft_m": 2,
+        },
+        {
+            "family": "freethrow",
+            "team_id": home,
+            "shot_made": 1,
+            "ft_n": 2,
+            "ft_m": 2,
+        },
+        {
+            "family": "freethrow",
+            "team_id": home,
+            "shot_made": 1,
+            "ft_n": 1,
+            "ft_m": 1,
+            "possession_after": home,
+        },
+    ]
+    df = _build_lineup_df(rows, home_id=home, away_id=away)
+    df["possession_after"] = df.get("possession_after", 0).fillna(0)
+    df = infer_possession_after(df)
+
+    expected = [away, away, home, away, away, away, home]
+    assert list(df["possession_after"]) == expected
