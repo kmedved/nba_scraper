@@ -159,6 +159,67 @@ def test_sidecar_merge():
     assert "block" not in df["family"].values
 
 
+def test_cdn_style_flags_exclude_control_descriptors():
+    pbp = {
+        "game": {
+            "gameId": "test",
+            "actions": [
+                {
+                    "actionNumber": 1,
+                    "orderNumber": 1,
+                    "period": 1,
+                    "clock": "PT12M00.00S",
+                    "actionType": "jumpball",
+                    "subType": "center",
+                    "descriptor": "StartPeriod",
+                    "qualifiers": ["startperiod"],
+                },
+                {
+                    "actionNumber": 2,
+                    "orderNumber": 2,
+                    "period": 1,
+                    "clock": "PT11M59.00S",
+                    "actionType": "2pt",
+                    "subType": "layup",
+                    "descriptor": "Challenge",
+                    "qualifiers": ["challenge"],
+                    "teamId": 1,
+                    "teamTricode": "HOM",
+                    "personId": 10,
+                    "playerName": "Test Shooter",
+                    "shotResult": "Missed",
+                    "shotActionNumber": 1,
+                    "score": {"home": 0, "away": 0},
+                },
+            ],
+        }
+    }
+    box = {
+        "game": {
+            "gameId": "test",
+            "gameTimeUTC": "2024-01-01T00:00:00Z",
+            "homeTeam": {
+                "teamId": 1,
+                "teamTricode": "HOM",
+                "players": [{"personId": 10, "status": "ACTIVE"}],
+            },
+            "awayTeam": {
+                "teamId": 2,
+                "teamTricode": "AWY",
+                "players": [{"personId": 20, "status": "ACTIVE"}],
+            },
+        }
+    }
+
+    df = cdn_parser.parse_actions_to_rows(pbp, box)
+    jump_row = df[df["family"] == "jumpball"].iloc[0]
+    assert "startperiod" not in (jump_row["style_flags"] or [])
+
+    challenge_row = df[df["qualifiers"].apply(lambda q: "challenge" in (q or []))].iloc[0]
+    assert "challenge" in challenge_row["qualifiers"]
+    assert "challenge" not in (challenge_row["style_flags"] or [])
+
+
 def test_event_codebook_maps_free_throw_actiontypes():
     cases = [
         ("Free Throw 1 of 1", 10),
@@ -197,6 +258,68 @@ def test_infer_possession_after_respects_feed_on_final_ft():
 
     result = infer_possession_after(df)
     assert result.loc[0, "possession_after"] == home
+
+
+def test_substitution_queue_scoped_to_clock_tick():
+    game_id = "test_game"
+    home_id = 1
+    away_id = 2
+    starters = {
+        "home": [10, 11, 12, 13, 14],
+        "away": [20, 21, 22, 23, 24],
+    }
+    rows = [
+        {
+            "game_id": game_id,
+            "home_team_id": home_id,
+            "away_team_id": away_id,
+            "family": "jumpball",
+            "seconds_elapsed": 0,
+            "player1_id": 10,
+            "player1_team_id": home_id,
+            "team_id": home_id,
+        },
+        {
+            "game_id": game_id,
+            "home_team_id": home_id,
+            "away_team_id": away_id,
+            "family": "substitution",
+            "subfamily": "out",
+            "seconds_elapsed": 100,
+            "player1_id": 14,
+            "player1_team_id": home_id,
+            "team_id": home_id,
+        },
+        {
+            "game_id": game_id,
+            "home_team_id": home_id,
+            "away_team_id": away_id,
+            "family": "substitution",
+            "subfamily": "in",
+            "seconds_elapsed": 200,
+            "player1_id": 15,
+            "player1_team_id": home_id,
+            "team_id": home_id,
+        },
+    ]
+    df = pd.DataFrame(rows)
+    result = lineup_builder.attach_lineups(df, starters=starters)
+
+    cols = [f"home_player_{idx}_id" for idx in range(1, 6)]
+    initial = tuple(int(result.loc[0, col]) for col in cols)
+    after_out = tuple(int(result.loc[1, col]) for col in cols)
+    after_in = tuple(int(result.loc[2, col]) for col in cols)
+
+    assert initial == after_out
+    assert initial == after_in
+
+
+def test_duplicate_sub_in_is_noop():
+    lineup = [1, 2, 3, 4, 5]
+    lineup_builder._apply_substitution(lineup, sub_out=6, sub_in=3)
+
+    assert lineup == [1, 2, 3, 4, 5]
+    assert len({pid for pid in lineup if pid is not None}) == 5
 
 
 def test_cdn_parser_populates_secondary_names_from_json():

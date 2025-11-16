@@ -294,6 +294,12 @@ def parse_actions_to_rows(
         ):
             qualifiers_list = [q for q in qualifiers_list if q != "startperiod"]
 
+        style_flags = [
+            flag
+            for flag in (style_flags or [])
+            if canon_str(flag) not in {"startperiod", "challenge"}
+        ]
+
         sig_key = (
             canon_str(family),
             canon_str(subfamily),

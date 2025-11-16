@@ -161,9 +161,9 @@ def _apply_substitution(
         return
 
     if sub_in and sub_in in lineup:
-        if sub_out and sub_out in lineup and sub_out != sub_in:
-            idx_out = lineup.index(sub_out)
-            lineup[idx_out] = None
+        # Treat duplicate "sub in" events as bookkeeping noise. Removing the
+        # outgoing player here would leave a four-player lineup that later gets
+        # column-wise backfilled into duplicated IDs.
         return
 
     if sub_out and sub_in:
@@ -185,7 +185,9 @@ def _apply_substitution(
             if pid is None:
                 lineup[idx] = sub_in
                 return
-        lineup[0] = sub_in
+        # No available slot and no matching sub_out – we do not know who left
+        # the floor, so leave the lineup unchanged.
+        return
 
 
 def attach_lineups(
@@ -248,6 +250,8 @@ def attach_lineups(
     # Maintain simple FIFO queues of pending outs for each team.
     pending_out_home: List[int] = []
     pending_out_away: List[int] = []
+    pending_secs_home: Optional[int] = None
+    pending_secs_away: Optional[int] = None
 
     def _resolve_team_from_row(row: pd.Series) -> Optional[int]:
         for key in ("team_id", "player1_team_id", "player2_team_id", "player3_team_id"):
@@ -257,6 +261,7 @@ def attach_lineups(
         return None
 
     for _, row in df.iterrows():
+        secs_val = _safe_int(row.get("seconds_elapsed"))
         player_id = _safe_int(row.get("player1_id"))
         event_team_id = _resolve_team_from_row(row) or _safe_int(row.get("player1_team_id"))
         if event_team_id and home_id and event_team_id == home_id:
@@ -306,12 +311,29 @@ def attach_lineups(
             if subfamily in {"out"}:
                 # CDN: "substitution" + subType "out" – only outgoing player present.
                 if pending_out is not None and raw_player:
+                    if substitution_team == home_id:
+                        if pending_secs_home is None or pending_secs_home != secs_val:
+                            pending_out.clear()
+                        pending_secs_home = secs_val
+                    elif substitution_team == away_id:
+                        if pending_secs_away is None or pending_secs_away != secs_val:
+                            pending_out.clear()
+                        pending_secs_away = secs_val
                     pending_out.append(raw_player)
             elif subfamily in {"in"}:
                 # CDN: "substitution" + subType "in" – only incoming player present.
                 sub_in = raw_player
-                if pending_out is not None and pending_out:
-                    sub_out = pending_out.pop(0)
+                if pending_out is not None:
+                    if substitution_team == home_id:
+                        if pending_secs_home is None or pending_secs_home != secs_val:
+                            pending_out.clear()
+                        pending_secs_home = secs_val
+                    elif substitution_team == away_id:
+                        if pending_secs_away is None or pending_secs_away != secs_val:
+                            pending_out.clear()
+                        pending_secs_away = secs_val
+                    if pending_out:
+                        sub_out = pending_out.pop(0)
             else:
                 # v2-style: player1_id = out, player2_id = in on the same row.
                 sub_out = raw_player
