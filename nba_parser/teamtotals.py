@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 
 
 class TeamTotals:
@@ -69,8 +70,17 @@ class TeamTotals:
             team_advanced_stats["oreb"]
             / (team_advanced_stats["oreb"] + team_advanced_stats["dreb_opponent"])
         )
-        team_advanced_stats["ft_per_fga"] = (
-            team_advanced_stats["ftm"] / team_advanced_stats["fta"]
+        # Free-throw percentage (FTM / FTA).
+        team_advanced_stats["ft_percent"] = np.where(
+            team_advanced_stats["fta"] > 0,
+            team_advanced_stats["ftm"] / team_advanced_stats["fta"],
+            0.0,
+        )
+        # Free throws made per field-goal attempt (FTM / FGA).
+        team_advanced_stats["ft_per_fga"] = np.where(
+            team_advanced_stats["fga"] > 0,
+            team_advanced_stats["ftm"] / team_advanced_stats["fga"],
+            0.0,
         )
         team_advanced_stats["opp_efg_percentage"] = (
             team_advanced_stats["fgm_opponent"]
@@ -84,8 +94,18 @@ class TeamTotals:
             team_advanced_stats["dreb"]
             / (team_advanced_stats["oreb_opponent"] + team_advanced_stats["dreb"])
         )
-        team_advanced_stats["opp_ft_per_fga"] = (
-            team_advanced_stats["ftm_opponent"] / team_advanced_stats["fta_opponent"]
+        # Opponent FT% and FTM per FGA.
+        team_advanced_stats["opp_ft_percent"] = np.where(
+            team_advanced_stats["fta_opponent"] > 0,
+            team_advanced_stats["ftm_opponent"]
+            / team_advanced_stats["fta_opponent"],
+            0.0,
+        )
+        team_advanced_stats["opp_ft_per_fga"] = np.where(
+            team_advanced_stats["fga_opponent"] > 0,
+            team_advanced_stats["ftm_opponent"]
+            / team_advanced_stats["fga_opponent"],
+            0.0,
         )
         team_advanced_stats["off_rating"] = (
             team_advanced_stats["points_for"] / team_advanced_stats["possessions"] * 100
