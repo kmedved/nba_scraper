@@ -49,6 +49,38 @@ def _opponent_team_id(
     return 0
 
 
+def _jumpball_recovered_person(action: Dict[str, Any]) -> int:
+    """
+    Return the recovered player's id for a jump-ball action.
+
+    CDN feeds aren't fully consistent:
+      - many games use jumpBallRecoveredPersonId / jumpBallRecoverdPersonId
+      - some 'subType == "recovered"' rows only expose the recovered
+        player via personId or tertiaryPersonId
+
+    We normalise all of those possibilities into a single integer id.
+    """
+    subtype = (action.get("subType") or "").strip().lower()
+
+    candidates: List[Any] = [
+        action.get("jumpBallRecoverdPersonId"),
+        action.get("jumpBallRecoveredPersonId"),
+    ]
+
+    # On 'recovered' rows, fall back to the generic ids if the specialised
+    # jumpBallRecovered* fields aren't populated.
+    if subtype == "recovered":
+        # Prefer tertiary ids when present since feeds often keep the jumpers
+        # as primary/secondary person ids on the recovery row.
+        candidates.append(action.get("tertiaryPersonId"))
+        candidates.append(action.get("personId"))
+
+    for value in candidates:
+        if value not in (None, "", 0):
+            return int_or_zero(value)
+    return 0
+
+
 class _SidecarCollector:
     def __init__(self) -> None:
         self._by_shot: Dict[Tuple[int, Optional[int]], Dict[str, Any]] = {}
@@ -389,10 +421,11 @@ def parse_actions_to_rows(
         if family == "jumpball":
             won_id = int_or_zero(action.get("jumpBallWonPersonId"))
             lost_id = int_or_zero(action.get("jumpBallLostPersonId"))
-            rec_id = int_or_zero(
+            explicit_rec = (
                 action.get("jumpBallRecoverdPersonId")
                 or action.get("jumpBallRecoveredPersonId")
             )
+            rec_id = _jumpball_recovered_person(action)
             # Determine teams for jumpers from person_to_team map.
             won_team = person_to_team.get(won_id, 0)
             lost_team = person_to_team.get(lost_id, 0)
@@ -413,7 +446,16 @@ def parse_actions_to_rows(
             # jumper who won/lost the tip. v2 feeds kept the recipient separate
             # and downstream logic can rely on player3_id being populated.
             if rec_id:
-                row["player3_id"] = rec_id
+                # Preserve legacy behavior when the explicit jumpBallRecovered*
+                # field is present: always override player3_id.
+                if explicit_rec:
+                    row["player3_id"] = rec_id
+                else:
+                    # Fallback path: only fill player3_id when we don't already
+                    # have a non-zero tertiary id (e.g. from tertiaryPersonId).
+                    if not int_or_zero(row.get("player3_id")):
+                        row["player3_id"] = rec_id
+
                 row["player3_team_id"] = person_to_team.get(rec_id, 0)
                 row["player3_name"] = _resolve_player_name(
                     action.get("jumpBallRecoveredName"),
