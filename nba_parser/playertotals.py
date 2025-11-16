@@ -38,11 +38,6 @@ class PlayerTotals:
         grouped_df = (
             self.pbg.groupby(["player_id", "player_name"])[stats].sum().reset_index()
         )
-        # equivalent of select distinct
-        team_df = self.pbg[
-            ["player_id", "player_name", "team_abbrev"]
-        ].drop_duplicates()
-
         team_df = (
             self.pbg.groupby(["player_id", "player_name"])
             .agg({"team_abbrev": lambda x: "/".join(x.unique())})
