@@ -14,23 +14,85 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
+CORE_TEAM_STAT_FIELDS: Tuple[str, ...] = (
+    "points",
+    "fgm",
+    "fga",
+    "tpm",
+    "tpa",
+    "ftm",
+    "fta",
+)
+
+EXTENDED_TEAM_STAT_FIELDS: Tuple[str, ...] = CORE_TEAM_STAT_FIELDS + (
+    "rebounds",
+    "assists",
+    "steals",
+    "blocks",
+    "turnovers",
+)
+
+
 def _team_totals_from_pbp(df: pd.DataFrame) -> Dict[int, Dict[str, int]]:
     """
     Compute simple team-level totals directly from canonical PbP.
 
     We mirror the obvious box score stats:
       - points, FGM, FGA, 3PM, 3PA, FTM, FTA
+      - rebounds, assists, steals, blocks, turnovers
     """
     if df.empty:
         return {}
 
-    shots = df[df["family"].isin(["2pt", "3pt"])]
-    freethrows = df[df["family"] == "freethrow"]
+    if "team_id" not in df or "family" not in df:
+        return {}
+
+    shots_mask = df["family"].isin(["2pt", "3pt"])
+    ft_mask = df["family"] == "freethrow"
+    shots = df[shots_mask]
+    freethrows = df[ft_mask]
 
     totals: Dict[int, Dict[str, int]] = {}
 
     # Ensure we have a numeric view on points_made in case of unexpected dtypes.
-    points_series = pd.to_numeric(df.get("points_made", 0), errors="coerce")
+    numeric_cache: Dict[str, pd.Series] = {}
+
+    def _numeric_series(column: str) -> pd.Series:
+        if column not in numeric_cache:
+            if column in df:
+                numeric_cache[column] = pd.to_numeric(df[column], errors="coerce").fillna(0)
+            else:
+                numeric_cache[column] = pd.Series(0, index=df.index, dtype="float64")
+        return numeric_cache[column]
+
+    points_series = _numeric_series("points_made")
+    shot_made_series = _numeric_series("shot_made")
+    assist_series = _numeric_series("assist_id")
+    o_reb_series = _numeric_series("is_o_rebound")
+    d_reb_series = _numeric_series("is_d_rebound")
+    team_reb_series = _numeric_series("team_rebound")
+    turnover_series = _numeric_series("is_turnover")
+
+    def _opponent_totals(value_col: str, team_col: str) -> Dict[int, int]:
+        if value_col not in df or team_col not in df:
+            return {}
+        values = _numeric_series(value_col)
+        teams = pd.to_numeric(df[team_col], errors="coerce").fillna(0)
+        data = pd.DataFrame({"team": teams, "value": values})
+        mask = (data["value"] > 0) & data["team"].notna() & (data["team"] != 0)
+        grouped = data[mask].groupby("team")["value"].sum()
+        result: Dict[int, int] = {}
+        for tid, val in grouped.items():
+            try:
+                tid_int = int(tid)
+            except (TypeError, ValueError):
+                continue
+            if tid_int:
+                result[tid_int] = int(val)
+        return result
+
+    steals_by_team = _opponent_totals("is_steal", "player2_team_id")
+    blocks_by_team = _opponent_totals("is_block", "player3_team_id")
 
     for team_id, group in df.groupby("team_id"):
         if not team_id:
@@ -41,16 +103,37 @@ def _team_totals_from_pbp(df: pd.DataFrame) -> Dict[int, Dict[str, int]]:
 
         # Use the filtered group index to sum points from the global series,
         # so we benefit from the numeric coercion above.
+        try:
+            tid = int(team_id)
+        except (TypeError, ValueError):
+            continue
+
         pts = int(points_series.loc[group.index].sum())
 
         fga = int(len(g_shots))
-        fgm = int((g_shots["shot_made"] == 1).sum())
-        tpa = int((g_shots["family"] == "3pt").sum())
-        tpm = int(((g_shots["family"] == "3pt") & (g_shots["shot_made"] == 1)).sum())
+        shot_made_values = shot_made_series.loc[g_shots.index]
+        fgm = int((shot_made_values == 1).sum())
+        shot_families = df["family"].loc[g_shots.index]
+        tpa = int((shot_families == "3pt").sum())
+        tpm = int(((shot_families == "3pt") & (shot_made_values == 1)).sum())
         fta = int(len(g_fts))
-        ftm = int((g_fts["shot_made"] == 1).sum())
+        ftm = int((shot_made_series.loc[g_fts.index] == 1).sum())
 
-        totals[int(team_id)] = {
+        made_shots = g_shots.loc[shot_made_values == 1]
+        assists = 0
+        if not made_shots.empty:
+            assist_vals = assist_series.loc[made_shots.index]
+            assists = int((assist_vals > 0).sum())
+
+        rebounds = int(
+            o_reb_series.loc[group.index].sum()
+            + d_reb_series.loc[group.index].sum()
+            + team_reb_series.loc[group.index].sum()
+        )
+
+        turnovers = int(turnover_series.loc[group.index].sum())
+
+        totals[tid] = {
             "points": pts,
             "fgm": fgm,
             "fga": fga,
@@ -58,6 +141,11 @@ def _team_totals_from_pbp(df: pd.DataFrame) -> Dict[int, Dict[str, int]]:
             "tpa": tpa,
             "ftm": ftm,
             "fta": fta,
+            "rebounds": rebounds,
+            "assists": assists,
+            "steals": int(steals_by_team.get(tid, 0)),
+            "blocks": int(blocks_by_team.get(tid, 0)),
+            "turnovers": turnovers,
         }
 
     return totals
@@ -101,6 +189,12 @@ def _team_totals_from_box(box_json: Dict[str, Any]) -> Dict[int, Dict[str, int]]
         except (TypeError, ValueError):
             return
 
+        rebounds = _get("reboundsTotal", "totalRebounds", "rebounds")
+        if not rebounds:
+            rebounds = _get("reboundsOffensive", "offensiveRebounds") + _get(
+                "reboundsDefensive", "defensiveRebounds"
+            )
+
         totals[tid] = {
             "points": points,
             "fgm": _get("fieldGoalsMade", "fgm"),
@@ -109,6 +203,11 @@ def _team_totals_from_box(box_json: Dict[str, Any]) -> Dict[int, Dict[str, int]]
             "tpa": _get("threePointersAttempted", "threePointsAttempted", "tpa"),
             "ftm": _get("freeThrowsMade", "ftm"),
             "fta": _get("freeThrowsAttempted", "fta"),
+            "rebounds": rebounds,
+            "assists": _get("assists", "ast"),
+            "steals": _get("steals", "stl"),
+            "blocks": _get("blocks", "blk"),
+            "turnovers": _get("turnovers", "to"),
         }
 
     for side_key in ("homeTeam", "awayTeam"):
@@ -121,7 +220,7 @@ def compare_pbp_to_box(
     df: pd.DataFrame,
     box_json: Dict[str, Any],
     *,
-    fields: Tuple[str, ...] = ("points", "fgm", "fga", "tpm", "tpa", "ftm", "fta"),
+    fields: Tuple[str, ...] = CORE_TEAM_STAT_FIELDS,
     atol: int = 0,
 ) -> List[Tuple[int, str, int, int]]:
     """
@@ -187,4 +286,6 @@ def log_team_boxscore_mismatches(
 __all__ = [
     "compare_pbp_to_box",
     "log_team_boxscore_mismatches",
+    "CORE_TEAM_STAT_FIELDS",
+    "EXTENDED_TEAM_STAT_FIELDS",
 ]
