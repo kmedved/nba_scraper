@@ -87,6 +87,22 @@ def test_eventnum_is_numeric():
     assert dfc["eventnum"].dtype.kind in ("i", "u")
 
 
+def test_cdn_and_v2_share_canonical_columns():
+    cdn_df = io_sources.parse_any(
+        (
+            FIXTURES / "cdn_playbyplay_0022400001.json",
+            FIXTURES / "cdn_boxscore_0022400001.json",
+        ),
+        io_sources.SourceKind.CDN_LOCAL,
+    )
+    v2_df = io_sources.parse_any(
+        FIXTURES / "v2_pbp_0021700001.json",
+        io_sources.SourceKind.V2_LOCAL,
+    )
+
+    assert list(cdn_df.columns) == list(v2_df.columns)
+
+
 def test_v2_parse_basic():
     v2 = _load_json("v2_pbp_0021700001.json")
     df = v2_parser.parse_v2_to_rows(v2)

@@ -1,7 +1,7 @@
 """Shared helpers for parser post-processing tasks."""
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -182,8 +182,22 @@ def infer_possession_after(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def finalize_dataframe(df: pd.DataFrame, *, sort_keys: List[str]) -> pd.DataFrame:
+    """Common end-of-parser post-processing for canonical frames."""
+
+    if df.empty:
+        return df
+
+    df = df.sort_values(sort_keys, kind="mergesort")
+    df["event_length"] = df.groupby("period")["seconds_elapsed"].diff()
+    df["event_length"] = df["event_length"].fillna(0).abs()
+    df = infer_possession_after(df)
+    return df.reset_index(drop=True)
+
+
 __all__ = [
     "_fill_team_fields",
     "_synth_xy",
     "infer_possession_after",
+    "finalize_dataframe",
 ]

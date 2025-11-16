@@ -14,35 +14,16 @@ from .mapping.event_codebook import (
 )
 from .helper_functions import get_season, iso_clock_to_pctimestring, seconds_elapsed
 from .mapping.loader import load_mapping
-from .parser_utils import _fill_team_fields, _synth_xy, infer_possession_after
+from .parser_utils import _fill_team_fields, _synth_xy, finalize_dataframe
+from .schema import (
+    CANONICAL_COLUMNS,
+    EVENT_TYPE_DE,
+    int_or_zero,
+    points_made_from_family,
+    scoremargin_str,
+)
 
 _SYNTH_FT_DESC = os.getenv("NBA_SCRAPER_SYNTH_FT_DESC", "0") == "1"
-
-_EVENT_TYPE_DE = {
-    1: "shot",
-    2: "missed_shot",
-    3: "free-throw",
-    4: "rebound",
-    5: "turnover",
-    6: "foul",
-    7: "violation",
-    8: "substitution",
-    9: "timeout",
-    10: "jump-ball",
-    12: "period",
-    13: "period",
-    15: "game",
-}
-
-
-def _int_or_zero(value: Any) -> int:
-    try:
-        if value in (None, ""):
-            return 0
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
-
 
 def _resolve_player_name(*values: Any) -> str:
     """Return the first non-empty string from the provided values."""
@@ -58,78 +39,13 @@ def _resolve_player_name(*values: Any) -> str:
             return candidate
     return ""
 
-_CANONICAL_COLUMNS = [
-    "game_id",
-    "period",
-    "pctimestring",
-    "seconds_elapsed",
-    "event_length",
-    "action_number",
-    "order_number",
-    "eventnum",
-    "time_actual",
-    "team_id",
-    "team_tricode",
-    "event_team",
-    "player1_id",
-    "player1_name",
-    "player1_team_id",
-    "player2_id",
-    "player2_name",
-    "player2_team_id",
-    "player3_id",
-    "player3_name",
-    "player3_team_id",
-    "home_team_id",
-    "home_team_abbrev",
-    "away_team_id",
-    "away_team_abbrev",
-    "homedescription",
-    "visitordescription",
-    "game_date",
-    "season",
-    "family",
-    "subfamily",
-    "eventmsgtype",
-    "eventmsgactiontype",
-    "event_type_de",
-    "is_three",
-    "shot_made",
-    "points_made",
-    "shot_distance",
-    "x",
-    "y",
-    "side",
-    "area",
-    "area_detail",
-    "assist_id",
-    "block_id",
-    "steal_id",
-    "style_flags",
-    "qualifiers",
-    "is_o_rebound",
-    "is_d_rebound",
-    "team_rebound",
-    "linked_shot_action_number",
-    "possession_after",
-    "score_home",
-    "score_away",
-    "scoremargin",
-    "is_turnover",
-    "is_steal",
-    "is_block",
-    "ft_n",
-    "ft_m",
-]
-
-
 def _opponent_team_id(
     acting_team_id: int, home_team_id: Optional[int], away_team_id: Optional[int]
 ) -> int:
     if acting_team_id and home_team_id and acting_team_id == int(home_team_id):
-        return _int_or_zero(away_team_id)
+        return int_or_zero(away_team_id)
     if acting_team_id and away_team_id and acting_team_id == int(away_team_id):
-        return _int_or_zero(home_team_id)
+        return int_or_zero(home_team_id)
     return 0
 
 
@@ -172,13 +88,13 @@ class _SidecarCollector:
             row["block_id"] = data["block_id"]
             if data.get("block_name"):
                 row["player3_name"] = data["block_name"]
-            if not _int_or_zero(row.get("player3_team_id")):
+            if not int_or_zero(row.get("player3_team_id")):
                 row["player3_team_id"] = _opponent_team_id(
-                    _int_or_zero(row.get("player1_team_id")),
+                    int_or_zero(row.get("player1_team_id")),
                     row.get("home_team_id"),
                     row.get("away_team_id"),
                 )
-            if not _int_or_zero(row.get("player3_id")):
+            if not int_or_zero(row.get("player3_id")):
                 row["player3_id"] = data["block_id"]
             if row.get("family") in {"2pt", "3pt"} and row.get("shot_made") == 0:
                 row["is_block"] = 1
@@ -188,9 +104,9 @@ class _SidecarCollector:
                 row["player2_name"] = data["steal_name"]
             if row.get("family") == "turnover":
                 row["player2_id"] = data["steal_id"]
-                if not _int_or_zero(row.get("player2_team_id")):
+                if not int_or_zero(row.get("player2_team_id")):
                     row["player2_team_id"] = _opponent_team_id(
-                        _int_or_zero(row.get("player1_team_id")),
+                        int_or_zero(row.get("player1_team_id")),
                         row.get("home_team_id"),
                         row.get("away_team_id"),
                     )
@@ -201,15 +117,6 @@ def _qualifiers_list(action: Dict[str, Any]) -> List[str]:
     quals = action.get("qualifiers") or []
     normalized = {canon_str(q) for q in quals if q}
     return sorted(q for q in normalized if q)
-
-
-def _scoremargin_str(score_home: Optional[int], score_away: Optional[int]) -> str:
-    try:
-        if score_home is None or score_away is None:
-            return ""
-        return str(int(score_home) - int(score_away))
-    except Exception:
-        return ""
 
 
 def _family_from_action(action: Dict[str, Any]) -> str:
@@ -229,16 +136,6 @@ def _shot_made_value(family: str, shot_result: Optional[str]) -> Optional[int]:
     if shot_result.lower() == "missed":
         return 0
     return None
-
-
-def _points_made(family: str, shot_made: Optional[int]) -> int:
-    if shot_made != 1:
-        return 0
-    if family == "3pt":
-        return 3
-    if family == "freethrow":
-        return 1
-    return 2
 
 
 def _score_tuple(action: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
@@ -296,10 +193,10 @@ def parse_actions_to_rows(
     game_meta = (box_json or {}).get("game", {})
     for side in ("homeTeam", "awayTeam"):
         team_blob = game_meta.get(side) or {}
-        team_id_val = _int_or_zero(team_blob.get("teamId"))
+        team_id_val = int_or_zero(team_blob.get("teamId"))
         team_tri_val = team_blob.get("teamTricode") or ""
         for player in team_blob.get("players", []) or []:
-            pid = _int_or_zero(player.get("personId"))
+            pid = int_or_zero(player.get("personId"))
             if not pid:
                 continue
             person_to_team[pid] = team_id_val
@@ -354,20 +251,20 @@ def parse_actions_to_rows(
         eventmsgtype = eventmsgtype_for(family, shot_result, subfamily)
         eventmsgactiontype = actiontype_code_for(family, subfamily)
         shot_made = _shot_made_value(family, shot_result)
-        points = _points_made(family, shot_made)
+        points = points_made_from_family(family, shot_made)
         is_three = 1 if family == "3pt" else 0
         score_home, score_away = _score_tuple(action)
 
         team_id_raw = action.get("teamId")
-        team_id_int = _int_or_zero(team_id_raw)
-        primary_player_id = _int_or_zero(action.get("personId"))
+        team_id_int = int_or_zero(team_id_raw)
+        primary_player_id = int_or_zero(action.get("personId"))
         if not team_id_int and primary_player_id:
             team_id_int = person_to_team.get(primary_player_id, 0)
         event_team = action.get("teamTricode") or ""
         if not event_team:
-            if team_id_int == _int_or_zero(home_id):
+            if team_id_int == int_or_zero(home_id):
                 event_team = home_tri or person_to_tri.get(primary_player_id, "")
-            elif team_id_int == _int_or_zero(away_id):
+            elif team_id_int == int_or_zero(away_id):
                 event_team = away_tri or person_to_tri.get(primary_player_id, "")
             elif primary_player_id:
                 event_team = person_to_tri.get(primary_player_id, "")
@@ -375,7 +272,7 @@ def parse_actions_to_rows(
 
         # Some newer CDN feeds attach block info directly to the shot action
         # instead of (or in addition to) a separate "block" sidecar row.
-        block_pid_direct = _int_or_zero(
+        block_pid_direct = int_or_zero(
             action.get("blockPersonId") or action.get("blockPersonID")
         )
         block_name_direct = (
@@ -446,7 +343,7 @@ def parse_actions_to_rows(
             "subfamily": subfamily,
             "eventmsgtype": eventmsgtype,
             "eventmsgactiontype": eventmsgactiontype,
-            "event_type_de": _EVENT_TYPE_DE.get(eventmsgtype, ""),
+            "event_type_de": EVENT_TYPE_DE.get(eventmsgtype, ""),
             "is_three": is_three,
             "shot_made": shot_made,
             "points_made": points,
@@ -471,7 +368,7 @@ def parse_actions_to_rows(
             "possession_after": action.get("possession"),
             "score_home": score_home,
             "score_away": score_away,
-            "scoremargin": _scoremargin_str(score_home, score_away),
+            "scoremargin": scoremargin_str(score_home, score_away),
             "is_turnover": 1 if family == "turnover" else 0,
             "is_steal": 0,
             "is_block": 0,
@@ -484,9 +381,9 @@ def parse_actions_to_rows(
         #   player2_id = jumpBallLostPlayer,
         #   player3_id = jumpBallRecovered (if different).
         if family == "jumpball":
-            won_id = _int_or_zero(action.get("jumpBallWonPersonId"))
-            lost_id = _int_or_zero(action.get("jumpBallLostPersonId"))
-            rec_id = _int_or_zero(
+            won_id = int_or_zero(action.get("jumpBallWonPersonId"))
+            lost_id = int_or_zero(action.get("jumpBallLostPersonId"))
+            rec_id = int_or_zero(
                 action.get("jumpBallRecoverdPersonId")
                 or action.get("jumpBallRecoveredPersonId")
             )
@@ -520,7 +417,7 @@ def parse_actions_to_rows(
                     row["eventmsgactiontype"] = int(overrides["eventmsgactiontype"])
             if overrides.get("subfamily"):
                 row["subfamily"] = str(overrides["subfamily"])
-            row["event_type_de"] = _EVENT_TYPE_DE.get(row["eventmsgtype"], "")
+            row["event_type_de"] = EVENT_TYPE_DE.get(row["eventmsgtype"], "")
 
         sidecars.apply(action, row)
 
@@ -540,18 +437,18 @@ def parse_actions_to_rows(
                 if not row.get("homedescription"):
                     row["homedescription"] = desc
 
-        row["assist_id"] = _int_or_zero(row.get("assist_id"))
-        row["block_id"] = _int_or_zero(row.get("block_id"))
-        row["steal_id"] = _int_or_zero(row.get("steal_id"))
+        row["assist_id"] = int_or_zero(row.get("assist_id"))
+        row["block_id"] = int_or_zero(row.get("block_id"))
+        row["steal_id"] = int_or_zero(row.get("steal_id"))
 
         # If sidecars did not populate a block, fall back to the direct block fields
         if family in {"2pt", "3pt"} and shot_made == 0:
             if not row["block_id"] and block_pid_direct:
                 row["block_id"] = block_pid_direct
                 # Use block as player3 (blocker)
-                if not _int_or_zero(row.get("player3_id")):
+                if not int_or_zero(row.get("player3_id")):
                     row["player3_id"] = block_pid_direct
-                if not _int_or_zero(row.get("player3_team_id")):
+                if not int_or_zero(row.get("player3_team_id")):
                     # Blocker is on the opponent team
                     row["player3_team_id"] = _opponent_team_id(
                         team_id_int, home_id, away_id
@@ -581,7 +478,7 @@ def parse_actions_to_rows(
                     or ""
                 )
         if family == "foul":
-            drawn_id = _int_or_zero(action.get("foulDrawnPersonId"))
+            drawn_id = int_or_zero(action.get("foulDrawnPersonId"))
             if drawn_id:
                 row["player2_id"] = drawn_id
                 row["player2_team_id"] = person_to_team.get(drawn_id, 0)
@@ -601,28 +498,28 @@ def parse_actions_to_rows(
                     or ""
                 )
 
-        row["player1_team_id"] = _int_or_zero(row.get("player1_team_id"))
-        row["player2_id"] = _int_or_zero(row.get("player2_id"))
-        row["player3_id"] = _int_or_zero(row.get("player3_id"))
-        row["player2_team_id"] = _int_or_zero(row.get("player2_team_id"))
-        row["player3_team_id"] = _int_or_zero(row.get("player3_team_id"))
+        row["player1_team_id"] = int_or_zero(row.get("player1_team_id"))
+        row["player2_id"] = int_or_zero(row.get("player2_id"))
+        row["player3_id"] = int_or_zero(row.get("player3_id"))
+        row["player2_team_id"] = int_or_zero(row.get("player2_team_id"))
+        row["player3_team_id"] = int_or_zero(row.get("player3_team_id"))
         if row["player1_team_id"] == 0 and row["player1_id"]:
             row["player1_team_id"] = person_to_team.get(row["player1_id"], 0)
         if row["player2_team_id"] == 0 and row["player2_id"]:
             row["player2_team_id"] = person_to_team.get(row["player2_id"], 0)
         if row["player3_team_id"] == 0 and row["player3_id"]:
             row["player3_team_id"] = person_to_team.get(row["player3_id"], 0)
-        eventmsgtype_final = _int_or_zero(row.get("eventmsgtype"))
-        row["event_type_de"] = _EVENT_TYPE_DE.get(eventmsgtype_final, "")
+        eventmsgtype_final = int_or_zero(row.get("eventmsgtype"))
+        row["event_type_de"] = EVENT_TYPE_DE.get(eventmsgtype_final, "")
         row["is_turnover"] = 1 if eventmsgtype_final == 5 else 0
         row["is_steal"] = (
-            1 if row["is_turnover"] and _int_or_zero(row.get("steal_id")) else 0
+            1 if row["is_turnover"] and int_or_zero(row.get("steal_id")) else 0
         )
         row["is_block"] = (
             1
             if family in {"2pt", "3pt"}
             and shot_made == 0
-            and _int_or_zero(row.get("block_id"))
+            and int_or_zero(row.get("block_id"))
             else 0
         )
 
@@ -659,12 +556,9 @@ def parse_actions_to_rows(
 
         rows.append(row)
 
-    df = pd.DataFrame(rows, columns=_CANONICAL_COLUMNS)
-    if df.empty:
-        return df
-
-    df = df.sort_values(["period", "order_number", "action_number"], kind="mergesort")
-    df["event_length"] = df.groupby("period")["seconds_elapsed"].diff()
-    df["event_length"] = df["event_length"].fillna(0).abs()
-    df = infer_possession_after(df)
-    return df.reset_index(drop=True)
+    df = pd.DataFrame(rows, columns=CANONICAL_COLUMNS)
+    df = finalize_dataframe(
+        df,
+        sort_keys=["period", "order_number", "action_number"],
+    )
+    return df
