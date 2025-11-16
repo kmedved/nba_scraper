@@ -495,6 +495,26 @@ def test_shots_have_xy_or_are_synthesized():
     assert (xy_present | synth)[shots].all()
 
 
+def test_shotchart_backfill_overrides_synth(monkeypatch):
+    pbp = FIXTURES / "cdn_playbyplay_0022400001.json"
+    box = FIXTURES / "cdn_boxscore_0022400001.json"
+    monkeypatch.setenv("NBA_SCRAPER_BACKFILL_COORDS", "1")
+    monkeypatch.setattr(io_sources, "_BACKFILL_COORDS", True)
+
+    df = io_sources.parse_any((pbp, box), io_sources.SourceKind.CDN_LOCAL)
+    expected = {
+        3: (5.5, 71.25),
+        7: (83.75, 12.5),
+    }
+    rows = df[df["eventnum"].isin(expected)].set_index("eventnum")
+    assert len(rows) == len(expected)
+    for eventnum, (exp_x, exp_y) in expected.items():
+        row = rows.loc[eventnum]
+        assert row["x"] == pytest.approx(exp_x)
+        assert row["y"] == pytest.approx(exp_y)
+        assert "xy_synth" not in (row["style_flags"] or [])
+
+
 def test_lineup_builder_substitution_uses_player1_team_id_when_team_missing():
     home_id = 1610612737
     away_id = 1610612744
