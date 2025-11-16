@@ -385,7 +385,7 @@ def parse_actions_to_rows(
         # For jump balls, prefer to follow v2 semantics:
         #   player1_id = jumpBallWonPlayer (home/away),
         #   player2_id = jumpBallLostPlayer,
-        #   player3_id = jumpBallRecovered (if different).
+        #   player3_id = jumpBallRecovered (always recorded).
         if family == "jumpball":
             won_id = int_or_zero(action.get("jumpBallWonPersonId"))
             lost_id = int_or_zero(action.get("jumpBallLostPersonId"))
@@ -409,11 +409,16 @@ def parse_actions_to_rows(
                 row["player2_name"] = _resolve_player_name(
                     action.get("jumpBallLostPlayerName"), row.get("player2_name")
                 )
-            if rec_id and rec_id not in (won_id, lost_id):
+            # Always record the recovered player, even if they are also the
+            # jumper who won/lost the tip. v2 feeds kept the recipient separate
+            # and downstream logic can rely on player3_id being populated.
+            if rec_id:
                 row["player3_id"] = rec_id
                 row["player3_team_id"] = person_to_team.get(rec_id, 0)
                 row["player3_name"] = _resolve_player_name(
-                    action.get("jumpBallRecoveredName"), row.get("player3_name")
+                    action.get("jumpBallRecoveredName"),
+                    row.get("player3_name"),
+                    action.get("playerName"),
                 )
 
         if overrides:
