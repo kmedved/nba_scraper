@@ -66,8 +66,11 @@ module import.
 
 ## Using with `nba_parser`
 
-The canonical dataframe can be passed straight into [`nba_parser`](https://pypi.org/project/nba-parser/)
-for advanced possession and box score calculations:
+The canonical dataframe can be passed straight into
+[`nba_parser`](https://github.com/kmedved/nba_parser) for advanced possession and
+box score calculations. `nba_scraper` now installs `nba_parser` directly from
+the upstream default (`master`) branch to ensure you always have the latest
+compatibility fixes:
 
 ```python
 from pathlib import Path

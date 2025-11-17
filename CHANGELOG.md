@@ -3,6 +3,7 @@
 ## Unreleased
 
 * Documented that Kostya Medvedovsky (@kmedved, creator of DARKO) now maintains `nba_scraper` and thanked Matthew Barlowe for creating the project.
+* Switched to installing `nba_parser` directly from the upstream `kmedved/nba_parser` default branch instead of bundling a pinned copy.
 
 ## 1.2.2
 

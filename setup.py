@@ -16,7 +16,13 @@ setup(
     url="https://github.com/mcbarlowe/nba_scraper",
     download_url="https://github.com/mcbarlowe/nba_scraper/archive/v1.2.2.tar.gz",
     keywords=["basketball", "NBA", "scraper"],
-    install_requires=["requests", "pandas", "numpy", "pyyaml"],
+    install_requires=[
+        "requests",
+        "pandas",
+        "numpy",
+        "pyyaml",
+        "nba_parser @ git+https://github.com/kmedved/nba_parser@master",
+    ],
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Science/Research",
