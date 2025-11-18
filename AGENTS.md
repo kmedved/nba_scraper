@@ -4,3 +4,56 @@ This repository must always maintain compatibility with both the **playbyplayv2*
 The goal for any changes is to produce data that can be parsed and read by `kmedved/nba_parser`.
 
 Agents must never guess about data structures or responses and must never use dummy or fabricated data.
+
+## Repository file overview
+This section documents every tracked file in the repository so downstream LLM agents can quickly locate code, tests, and fixtures.
+
+### Top-level metadata and configuration
+* `README.md` – User-facing package overview, installation/usage examples, schema notes, and environment variable knobs for parsing, mapping, and lineup enrichment.
+* `CHANGELOG.md` – Release notes and unreleased changes, including parser compatibility updates and maintainer handoff details.
+* `LICENSE` – GPLv3 license text for the project.
+* `requirements.txt` – Runtime dependencies pinned for the package (numpy, pandas, requests, etc.).
+* `setup.py` / `setup.cfg` / `MANIFEST.in` – Packaging configuration for PyPI distribution and included data files.
+* `get_api_calls.py` – Obsolete stub raising a `RuntimeError` to redirect users to the public scraping API.
+
+### Core package (`nba_scraper/`)
+* `__init__.py` – Re-exports the primary scraping helpers (`scrape_game`, `scrape_season`, `scrape_date_range`, `scrape_from_files`).
+* `nba_scraper.py` – Public entry points wrapping the unified parsing pipeline, CSV/pandas output selection, date validation, and filesystem output handling.
+* `scrape_functions.py` – Minimal façade calling `io_sources.parse_any` against CDN remote feeds with optional YAML mapping overrides.
+* `io_sources.py` – Source router that loads JSON from remote CDN, local fixtures, or in-memory dicts; coordinates optional shot chart backfill, lineup attachment, and boxscore validation based on environment flags; exposes `SourceKind` enum and helper loaders.
+* `cdn_client.py` – HTTP client for CDN play-by-play/boxscore/shotchart/schedule endpoints with retry-enabled `requests.Session` helpers.
+* `helper_functions.py` – Utility helpers for time parsing (`iso_clock_to_pctimestring`, `seconds_elapsed`), date-to-season derivation, and CDN schedule range querying.
+* `cdn_parser.py` – Canonical parser for CDN liveData payloads: normalizes descriptors, computes event/family metadata, links sidecar actions (steals/blocks), enriches qualifiers, synthesizes coordinates when missing, and returns sorted canonical dataframes.
+* `v2_parser.py` – Legacy JSON archive parser that mirrors canonical columns, infers event families/subfamilies, fills missing coordinates, and applies YAML overrides similar to the CDN parser.
+* `parser_utils.py` – Shared helpers for both parsers (team field backfilling, shot-coordinate synthesis, possession inference, dataframe finalization, and coordinate presets).
+* `lineup_builder.py` – Lineup reconstruction utilities: seeds starters from box scores, processes substitution events (CDN and v2 semantics), tracks on-court player IDs/names, and backfills lineup columns per event.
+* `coords_backfill.py` – Merges shot chart data into parsed play-by-play frames, replacing synthesized/missing coordinates and cleaning style flags.
+* `boxscore_validation.py` – Computes team totals from canonical PbP, compares against official box scores, and provides logging helpers plus field constant tuples.
+* `stat_calc_functions.py` – Small vectorized helpers for downstream stat calculations (shot made flag, foul/shot subtype parsing, points/seconds extraction).
+* `helper_functions.py` – See above; located in core package to support scraping flows.
+* `schema.py` – Canonical column ordering, event type labels, and simple numeric helpers (`int_or_zero`, `scoremargin_str`, `points_made_from_family`).
+
+### Mapping utilities (`nba_scraper/mapping/`)
+* `__init__.py` – Re-exports descriptor normalization and event code helpers.
+* `descriptor_norm.py` – Normalizes descriptor strings, extracts style flags, and provides canonicalization helpers for mapping keys.
+* `event_codebook.py` – Legacy event/family/subtype lookup tables plus functions to compute `eventmsgtype`, `eventmsgactiontype`, and free-throw trip counters (`ft_n_m`).
+* `loader.py` – YAML loader that converts curated signature mappings into lookup dictionaries keyed by `(family, subType, descriptor_core, qualifiers)` tuples.
+* `mapping_template.yml` – Example YAML showing how to override subfamily and msgaction/msgtype codes for specific signatures.
+
+### Scripts
+* `scripts/cataloguer.py` – Standalone CLI for cataloging CDN payload schemas: fetches and caches play-by-play/boxscore JSON, derives action signatures, summarizes field usage, and outputs mapping baselines to detect upstream data drift.
+
+### Tests and fixtures (`tests/`)
+* `test_boxscore_validation.py` – Verifies PbP-derived totals match box score fixtures, checks empty-input behavior, and exercises extended stat field comparisons.
+* `test_functional.py` – Functional smoke tests across parsing pathways (CDN and v2) using fixture JSON, ensuring canonical columns and lineup enrichment are present.
+* `test_integration.py` – Integration tests that round-trip parsed dataframes through `nba_parser` to validate compatibility and lineup/possession consistency.
+* `test_mapping_overrides.py` – Ensures YAML mapping overrides remap event families/action codes as expected for CDN and v2 inputs.
+* `test_teamtotals_ft_metrics.py` – Checks free-throw trip metadata and team total calculations for correctness.
+* `test_unit.py` – Unit-level coverage for helper utilities (time parsing, possession inference, shot coordinate synthesis, etc.).
+* `test_with_parser.py` – Validates interactions with the external `nba_parser` package using canonical dataframe outputs.
+* Fixture files under `tests/test_files/` – Frozen CDN/v2 JSON payloads and minimal YAML mapping used by the test suite (`cdn_playbyplay_0022400001.json`, `cdn_boxscore_0022400001.json`, `cdn_shotchart_0022400001.json`, `v2_pbp_0021700001.json`, `mapping_min.yml`).
+
+### Project data and misc
+* `requirements.txt` – Dependency pins used for installation/testing.
+* `setup.cfg` / `setup.py` / `MANIFEST.in` – Packaging metadata, pytest config, lint settings, and included files for distribution.
+* `scripts/` and `get_api_calls.py` – See entries above; `get_api_calls.py` intentionally errors to redirect users to supported APIs.
